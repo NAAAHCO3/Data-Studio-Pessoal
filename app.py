@@ -17,13 +17,13 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 # --- CONFIGURAÇÃO GERAL ---
 st.set_page_config(
-    page_title="Data Studio Pessoal", 
+    page_title="Data Studio Enterprise", 
     layout="wide", 
     page_icon="🚀",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS PROFISSIONAL (DARK THEME TWEAKS) ---
+# --- CSS PROFISSIONAL (DARK THEME REFINED) ---
 st.markdown("""
 <style>
     /* Importando fonte moderna */
@@ -31,6 +31,12 @@ st.markdown("""
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
+        color: #E0E0E0; /* Texto padrão claro */
+    }
+    
+    /* Fundo Geral */
+    .stApp {
+        background-color: #0E1117;
     }
     
     /* Estilização de Cards para Métricas */
@@ -42,9 +48,17 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
     
-    /* Títulos e Cabeçalhos */
-    h1, h2, h3 {
-        color: #FFFFFF;
+    div[data-testid="stMetricLabel"] {
+        color: #AAAAAA !important; /* Cor do título da métrica */
+    }
+    
+    div[data-testid="stMetricValue"] {
+        color: #FFFFFF !important; /* Cor do valor da métrica */
+    }
+    
+    /* Títulos e Cabeçalhos - Garantindo contraste */
+    h1, h2, h3, h4, h5, h6 {
+        color: #FFFFFF !important;
         font-weight: 700;
     }
     
@@ -53,6 +67,13 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         padding-bottom: 10px;
+    }
+    
+    /* Labels de inputs (Selectbox, Textinput, etc) */
+    label[data-testid="stWidgetLabel"] p {
+        font-size: 1rem;
+        color: #E0E0E0 !important;
+        font-weight: 600;
     }
 
     /* Ajuste da Sidebar */
@@ -75,6 +96,19 @@ st.markdown("""
         background-color: #357ABD;
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(79, 139, 249, 0.4);
+        color: white;
+    }
+    
+    /* Expander mais visível */
+    .streamlit-expanderHeader {
+        color: #FFFFFF !important;
+        background-color: #1E1E1E;
+        border-radius: 5px;
+    }
+    
+    /* Ajuste de contrastes em tabelas e JSON */
+    div[data-testid="stJson"] {
+        color: #E0E0E0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -93,13 +127,13 @@ def load_data(file):
 def download_model(model):
     output_model = pickle.dumps(model)
     b64 = base64.b64encode(output_model).decode()
-    href = f'<a href="data:file/output_model;base64,{b64}" download="model_trained.pkl" class="css-button">📥 Download Modelo (.pkl)</a>'
+    href = f'<a href="data:file/output_model;base64,{b64}" download="model_trained.pkl" class="css-button" style="text-decoration:none; color:#4F8BF9; font-weight:bold; border:1px solid #4F8BF9; padding:10px; border-radius:5px;">📥 Baixar Modelo (.pkl)</a>'
     st.markdown(href, unsafe_allow_html=True)
 
 # --- SIDEBAR DE NAVEGAÇÃO ---
 with st.sidebar:
     st.title("🚀 Data Studio")
-    st.markdown("v3.0")
+    st.markdown("v3.1 Enterprise")
     st.markdown("---")
     
     uploaded_file = st.file_uploader("Carregar Dataset (CSV/XLSX)", type=["csv", "xlsx"])
@@ -178,7 +212,12 @@ if menu == "🏠 Dashboard":
         dtypes.columns = ['Tipo', 'Contagem']
         dtypes['Tipo'] = dtypes['Tipo'].astype(str)
         fig = px.pie(dtypes, names='Tipo', values='Contagem', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
-        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=350, paper_bgcolor='rgba(0,0,0,0)')
+        fig.update_layout(
+            margin=dict(t=0, b=0, l=0, r=0), 
+            height=350, 
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#E0E0E0') # Correção de cor no gráfico
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 # ====================================================================
@@ -197,12 +236,13 @@ elif menu == "🔬 Explorador de Dados":
         with c1:
             if pd.api.types.is_numeric_dtype(df_work[col_sel]):
                 fig = px.histogram(df_work, x=col_sel, marginal="box", nbins=30, title=f"Histograma de {col_sel}")
-                fig.update_layout(showlegend=False)
+                fig.update_layout(showlegend=False, font=dict(color='#E0E0E0'), paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 top_n = df_work[col_sel].value_counts().nlargest(15).reset_index()
                 top_n.columns = [col_sel, 'Contagem']
                 fig = px.bar(top_n, x=col_sel, y='Contagem', title=f"Top 15 Categorias: {col_sel}")
+                fig.update_layout(font=dict(color='#E0E0E0'), paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig, use_container_width=True)
         
         with c2:
@@ -221,6 +261,7 @@ elif menu == "🔬 Explorador de Dados":
         if len(df_num.columns) > 1:
             corr = df_num.corr()
             fig = px.imshow(corr, text_auto='.2f', aspect="auto", color_continuous_scale='Viridis')
+            fig.update_layout(font=dict(color='#E0E0E0'), paper_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True, height=600)
         else:
             st.warning("Precisa de pelo menos 2 colunas numéricas.")
@@ -293,9 +334,10 @@ elif menu == "🛠️ Engenharia de Features":
             if cols:
                 c_sel = st.selectbox("Coluna Categórica:", cols)
                 if st.button("Converter em Números"):
-                    df_work = pd.get_dummies(df_work, columns=[c_sel], drop_first=True)
+                    # CORREÇÃO AQUI: dtype=int para garantir 0 e 1, não True/False
+                    df_work = pd.get_dummies(df_work, columns=[c_sel], drop_first=True, dtype=int)
                     st.session_state['df_work'] = df_work
-                    st.success("Colunas dummy criadas!")
+                    st.success("Colunas dummy criadas com sucesso (0/1)!")
                     st.rerun()
             else:
                 st.warning("Sem colunas categóricas.")
@@ -396,6 +438,7 @@ elif menu == "🤖 AutoML Studio":
                         
                         fig = px.scatter(x=y_test, y=preds, labels={'x': 'Real', 'y': 'Previsto'}, title="Real vs Previsto")
                         fig.add_shape(type="line", line=dict(dash="dash", color="gray"), x0=y.min(), y0=y.max(), x1=y.min(), y1=y.max())
+                        fig.update_layout(font=dict(color='#E0E0E0'), paper_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig, use_container_width=True)
                         
                     else:
@@ -405,6 +448,7 @@ elif menu == "🤖 AutoML Studio":
                         # Matriz de Confusão
                         cm = confusion_matrix(y_test, preds)
                         fig = px.imshow(cm, text_auto=True, title="Matriz de Confusão", color_continuous_scale='Blues')
+                        fig.update_layout(font=dict(color='#E0E0E0'), paper_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig, use_container_width=True)
 
                     # Feature Importance (Se disponível)
@@ -412,6 +456,7 @@ elif menu == "🤖 AutoML Studio":
                         st.subheader("O que mais impacta o resultado?")
                         imp = pd.DataFrame({'Feature': features, 'Importância': model.feature_importances_}).sort_values('Importância', ascending=False)
                         fig_imp = px.bar(imp, x='Importância', y='Feature', orientation='h')
+                        fig_imp.update_layout(font=dict(color='#E0E0E0'), paper_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig_imp, use_container_width=True)
 
             except Exception as e:
@@ -481,6 +526,13 @@ elif menu == "📊 Visualizador Pro":
                 fig = px.violin(df_work, x=x_axis, y=y_axis, color=color_dim)
             elif chart_type == "Heatmap Density":
                 fig = px.density_heatmap(df_work, x=x_axis, y=y_axis)
+            
+            # Ajuste global de fonte para os gráficos
+            fig.update_layout(
+                font=dict(color='#E0E0E0'), 
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
                 
             st.plotly_chart(fig, use_container_width=True)
         except Exception as e:
