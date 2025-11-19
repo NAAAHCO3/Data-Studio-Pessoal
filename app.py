@@ -9,48 +9,45 @@ import re
 import unicodedata
 from io import BytesIO
 
-# --- BIBLIOTECAS CIENTÍFICAS (NOVAS) ---
+# --- BIBLIOTECAS CIENTÍFICAS ---
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from scipy import stats
 
-# Bibliotecas de Machine Learning
+# --- MACHINE LEARNING ---
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor, GradientBoostingClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score, classification_report, confusion_matrix
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-
-# Bibliotecas de NLP (Texto)
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 
-# Bibliotecas de Clustering (Não Supervisionado)
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-
-# --- CONFIGURAÇÃO GERAL ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Data Studio v7 Chemometrics", 
+    page_title="Data Studio Ultimate", 
     layout="wide", 
-    page_icon="⚗️",
+    page_icon="🔬",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS MINIMALISTA ---
+# --- CSS PERSONALIZADO (NATIVO + AJUSTES) ---
 st.markdown("""
 <style>
-    .main { padding-top: 2rem; }
+    .main { padding-top: 1rem; }
     div[data-testid="stMetric"] {
-        background-color: rgba(128, 128, 128, 0.1);
+        background-color: rgba(28, 131, 225, 0.1);
+        border: 1px solid rgba(28, 131, 225, 0.2);
         border-radius: 8px;
-        padding: 15px;
+        padding: 10px;
     }
     h1, h2, h3 { font-family: 'Segoe UI', sans-serif; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÕES UTILITÁRIAS ---
+# --- FUNÇÕES AUXILIARES ---
 @st.cache_data
 def load_data(file):
     try:
@@ -62,20 +59,18 @@ def load_data(file):
         st.error(f"Erro ao ler arquivo: {e}")
         return None
 
-def download_model(model, filename="model.pkl"):
-    output_model = pickle.dumps(model)
-    b64 = base64.b64encode(output_model).decode()
-    href = f'<a href="data:file/output_model;base64,{b64}" download="{filename}">📥 Baixar Modelo Treinado (.pkl)</a>'
-    st.markdown(href, unsafe_allow_html=True)
+def download_file(object_to_download, filename, label="Baixar Arquivo"):
+    if isinstance(object_to_download, pd.DataFrame):
+        data = object_to_download.to_csv(index=False).encode('utf-8')
+        mime = "text/csv"
+    else:
+        data = pickle.dumps(object_to_download)
+        data = base64.b64encode(data).decode()
+        href = f'<a href="data:file/output_model;base64,{data}" download="{filename}">📥 {label}</a>'
+        st.markdown(href, unsafe_allow_html=True)
+        return
 
-def download_csv(df):
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Baixar CSV Atualizado",
-        data=csv,
-        file_name="dados_processados.csv",
-        mime="text/csv"
-    )
+    st.download_button(label=f"📥 {label}", data=data, file_name=filename, mime=mime)
 
 def dsa_limpa_texto(texto):
     if not isinstance(texto, str): return ""
@@ -84,239 +79,311 @@ def dsa_limpa_texto(texto):
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("⚗️ Data Studio")
-    st.caption("v7.0 Chemometrics Edition")
+    st.title("🔬 Data Studio")
+    st.caption("v8.0 Definitive Edition")
     st.markdown("---")
     
-    uploaded_file = st.file_uploader("Carregar Dataset", type=["csv", "xlsx"])
+    uploaded_file = st.file_uploader("Dataset (CSV/Excel)", type=["csv", "xlsx"])
     
     if uploaded_file:
+        # Gestão de Estado
         if 'df_raw' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
             df = load_data(uploaded_file)
             if df is not None:
                 st.session_state['df_raw'] = df
                 st.session_state['df_work'] = df.copy()
                 st.session_state['file_name'] = uploaded_file.name
-                st.toast("Dados carregados!", icon="✅")
+                st.toast("Dataset carregado!", icon="✅")
         
         if 'df_work' in st.session_state:
             df_work = st.session_state['df_work']
-            st.info(f"Linhas: {df_work.shape[0]} | Colunas: {df_work.shape[1]}")
+            st.info(f"L: {df_work.shape[0]} | C: {df_work.shape[1]}")
             
             if st.button("🔄 Restaurar Original"):
                 st.session_state['df_work'] = st.session_state['df_raw'].copy()
                 st.rerun()
             
             st.markdown("---")
-            # Menu Reorganizado
-            menu = st.radio("Módulos:", 
-                [
-                    "🏠 Dashboard", 
-                    "🔬 Explorador & Correlações", 
-                    "🛠️ Engenharia", 
-                    "⚗️ Estatística & DOE (Novo!)", 
-                    "🤖 AutoML (Preditivo)", 
-                    "🌀 Clustering (Grupos)", 
-                    "🎨 Visualizador Pro (Relatórios)"
-                ],
-                index=3
-            )
+            menu = st.radio("Fluxo de Trabalho:", [
+                "🏠 Dashboard",
+                "🛠️ Engenharia de Dados",     # Restaurado Completo
+                "🔬 Explorador & Correlação",
+                "⚗️ Estatística & DOE",        # Mantido v7
+                "🤖 AutoML (Tabular)",
+                "🧠 NLP Studio (Texto)",
+                "🌀 Clustering",
+                "🎨 Visualizador Pro"
+            ])
     else:
         menu = "Home"
 
 # --- HOME ---
 if not uploaded_file:
-    st.title("Data Studio v7.0 - Chemometrics Edition")
+    st.title("Data Studio Ultimate v8.0")
     st.markdown("""
-    ### Workstation para Ciência de Dados e Estatística Experimental.
+    ### A Ferramenta Definitiva para Cientistas de Dados.
     
-    **Novidades da v7.0:**
-    * ⚗️ **ANOVA & DOE:** Tabelas de variância completas (estilo Minitab) e análise de superfície.
-    * 📈 **Statsmodels:** Relatórios de regressão OLS detalhados (P-valor, R-quadrado ajustado, Confiança).
-    * 🧪 **Testes T:** Comparação de médias para experimentos.
-    * 🎨 **Gráficos de Publicação:** Personalize cores, títulos e eixos para seus relatórios.
+    Esta versão consolida todas as funcionalidades em uma interface robusta.
     
-    👈 **Carregue seus dados experimentais para começar.**
+    1.  **Engenharia Completa:** Limpeza, Tipagem, Nulos, Mapeamento Manual.
+    2.  **Estatística (Chemometrics):** ANOVA, OLS, Testes de Hipótese.
+    3.  **Machine Learning:** AutoML, NLP e Clustering.
+    4.  **Visualização:** Gráficos customizáveis para publicação.
+    
+    👈 **Carregue seu arquivo para começar.**
     """)
     st.stop()
 
-# --- 1. DASHBOARD ---
+# ==============================================================================
+# 1. DASHBOARD
+# ==============================================================================
 if menu == "🏠 Dashboard":
     st.header("Visão Geral")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Registros", df_work.shape[0])
-    c2.metric("Colunas", df_work.shape[1])
-    c3.metric("Nulos", df_work.isna().sum().sum())
-    st.dataframe(df_work.head(100), use_container_width=True)
+    c1.metric("Total Registros", df_work.shape[0])
+    c2.metric("Total Colunas", df_work.shape[1])
+    c3.metric("Dados Faltantes", df_work.isna().sum().sum())
+    
+    st.subheader("Amostra de Dados")
+    st.dataframe(df_work.head(50), use_container_width=True)
+    
+    st.subheader("Tipos de Dados")
+    dtypes = df_work.dtypes.value_counts().reset_index()
+    dtypes.columns = ['Tipo', 'Contagem']
+    dtypes['Tipo'] = dtypes['Tipo'].astype(str)
+    st.plotly_chart(px.pie(dtypes, names='Tipo', values='Contagem', hole=0.4), use_container_width=True)
 
-# --- 2. EXPLORADOR ---
-elif menu == "🔬 Explorador & Correlações":
-    st.header("Exploração de Dados")
-    t1, t2 = st.tabs(["Distribuições", "Matriz de Correlação"])
+# ==============================================================================
+# 2. ENGENHARIA DE DADOS (COMPLETO RESTAURADO)
+# ==============================================================================
+elif menu == "🛠️ Engenharia de Dados":
+    st.header("Engenharia de Dados & Limpeza")
+    
+    tab_struct, tab_clean, tab_transf = st.tabs(["1. Estrutura & Tipos", "2. Limpeza & Nulos", "3. Transformação"])
+    
+    # --- TAB 1: ESTRUTURA ---
+    with tab_struct:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Renomear Colunas")
+            col_rename = st.selectbox("Coluna:", df_work.columns)
+            new_name = st.text_input("Novo Nome:", value=col_rename)
+            if st.button("Aplicar Renomeação"):
+                df_work.rename(columns={col_rename: new_name}, inplace=True)
+                st.session_state['df_work'] = df_work
+                st.rerun()
+                
+            st.divider()
+            st.subheader("Excluir Colunas")
+            cols_drop = st.multiselect("Selecione para apagar:", df_work.columns)
+            if st.button("🗑️ Excluir Colunas Selecionadas"):
+                df_work.drop(columns=cols_drop, inplace=True)
+                st.session_state['df_work'] = df_work
+                st.rerun()
+                
+        with c2:
+            st.subheader("Converter Tipos de Dados")
+            col_convert = st.selectbox("Selecione a Coluna:", df_work.columns)
+            target_type = st.selectbox("Para qual tipo?", ["Numérico (Float)", "Texto (String)", "Data (DateTime)"])
+            
+            if st.button("Converter Tipo"):
+                try:
+                    if "Numérico" in target_type:
+                        df_work[col_convert] = pd.to_numeric(df_work[col_convert], errors='coerce')
+                    elif "Texto" in target_type:
+                        df_work[col_convert] = df_work[col_convert].astype(str)
+                    elif "Data" in target_type:
+                        df_work[col_convert] = pd.to_datetime(df_work[col_convert], errors='coerce')
+                    st.session_state['df_work'] = df_work
+                    st.success(f"Coluna {col_convert} convertida!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro na conversão: {e}")
+
+    # --- TAB 2: LIMPEZA ---
+    with tab_clean:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Remover Duplicatas")
+            if st.button("Detectar e Remover Duplicatas"):
+                antes = len(df_work)
+                df_work.drop_duplicates(inplace=True)
+                depois = len(df_work)
+                st.session_state['df_work'] = df_work
+                st.success(f"Removidas {antes - depois} linhas duplicadas.")
+                st.rerun()
+                
+        with c2:
+            st.subheader("Tratamento Avançado de Nulos")
+            cols_null = df_work.columns[df_work.isna().any()].tolist()
+            
+            if cols_null:
+                col_target = st.selectbox("Coluna com Nulos:", cols_null)
+                method = st.selectbox("Método de Tratamento:", 
+                    ["Preencher com 0", "Preencher com Média", "Preencher com Mediana", "Preencher com Moda", "Remover Linhas", "Valor Personalizado"])
+                
+                custom_val = None
+                if method == "Valor Personalizado":
+                    custom_val = st.text_input("Digite o valor:")
+                
+                if st.button("Aplicar Tratamento de Nulos"):
+                    if method == "Remover Linhas":
+                        df_work.dropna(subset=[col_target], inplace=True)
+                    elif method == "Preencher com 0":
+                        df_work[col_target].fillna(0, inplace=True)
+                    elif method == "Preencher com Média" and pd.api.types.is_numeric_dtype(df_work[col_target]):
+                        df_work[col_target].fillna(df_work[col_target].mean(), inplace=True)
+                    elif method == "Preencher com Mediana" and pd.api.types.is_numeric_dtype(df_work[col_target]):
+                        df_work[col_target].fillna(df_work[col_target].median(), inplace=True)
+                    elif method == "Preencher com Moda":
+                        df_work[col_target].fillna(df_work[col_target].mode()[0], inplace=True)
+                    elif method == "Valor Personalizado" and custom_val:
+                        df_work[col_target].fillna(custom_val, inplace=True)
+                    
+                    st.session_state['df_work'] = df_work
+                    st.success("Tratamento aplicado!")
+                    st.rerun()
+            else:
+                st.success("O Dataset não possui valores nulos neste momento.")
+
+    # --- TAB 3: TRANSFORMAÇÃO ---
+    with tab_transf:
+        st.subheader("Feature Engineering")
+        
+        type_transf = st.radio("Ferramenta:", ["One-Hot Encoding (Dummies)", "Normalização (StandardScaler)", "Mapeamento Manual"])
+        
+        if type_transf == "One-Hot Encoding (Dummies)":
+            col_dummy = st.selectbox("Coluna Categórica:", df_work.select_dtypes(include='object').columns)
+            if st.button("Gerar Dummies"):
+                df_work = pd.get_dummies(df_work, columns=[col_dummy], drop_first=True, dtype=int)
+                st.session_state['df_work'] = df_work
+                st.rerun()
+                
+        elif type_transf == "Normalização (StandardScaler)":
+            cols_norm = st.multiselect("Colunas para Normalizar:", df_work.select_dtypes(include='number').columns)
+            if st.button("Aplicar Normalização") and cols_norm:
+                scaler = StandardScaler()
+                df_work[cols_norm] = scaler.fit_transform(df_work[cols_norm])
+                st.session_state['df_work'] = df_work
+                st.rerun()
+                
+        elif type_transf == "Mapeamento Manual":
+            col_map = st.selectbox("Coluna para Mapear:", df_work.columns)
+            unique_vals = df_work[col_map].unique()
+            if len(unique_vals) < 50:
+                st.write("Defina os valores:")
+                mapping = {}
+                cols_ui = st.columns(2)
+                for i, val in enumerate(unique_vals):
+                    with cols_ui[i%2]:
+                        new_val = st.text_input(f"Valor para '{val}':", key=f"map_{val}")
+                        if new_val: mapping[val] = new_val
+                
+                if st.button("Aplicar Mapeamento"):
+                    # Tenta converter para numero se possivel
+                    final_map = {}
+                    for k, v in mapping.items():
+                        try: final_map[k] = float(v)
+                        except: final_map[k] = v
+                    
+                    df_work[col_map] = df_work[col_map].map(final_map).fillna(df_work[col_map])
+                    st.session_state['df_work'] = df_work
+                    st.rerun()
+            else:
+                st.warning("Muitos valores únicos para mapeamento manual.")
+    
+    st.divider()
+    download_file(df_work, "dados_engenharia.csv", "Baixar Dados Atuais (CSV)")
+
+# ==============================================================================
+# 3. EXPLORADOR
+# ==============================================================================
+elif menu == "🔬 Explorador & Correlação":
+    st.header("Análise Exploratória")
+    t1, t2 = st.tabs(["Distribuições", "Correlações"])
     
     with t1:
-        col_sel = st.selectbox("Coluna:", df_work.columns)
+        col_sel = st.selectbox("Variável:", df_work.columns)
         if pd.api.types.is_numeric_dtype(df_work[col_sel]):
-            fig = px.histogram(df_work, x=col_sel, marginal="box", title=f"Distribuição: {col_sel}")
+            fig = px.histogram(df_work, x=col_sel, marginal="box", title=f"Hist: {col_sel}")
         else:
             fig = px.bar(df_work[col_sel].value_counts().head(20), title=f"Contagem: {col_sel}")
         st.plotly_chart(fig, use_container_width=True)
         
     with t2:
-        st.markdown("### Correlação de Pearson")
         df_num = df_work.select_dtypes(include='number')
         if len(df_num.columns) > 1:
             fig = px.imshow(df_num.corr(), text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
-            st.plotly_chart(fig, use_container_width=True, height=600)
+            st.plotly_chart(fig, use_container_width=True, height=700)
         else:
             st.warning("Colunas numéricas insuficientes.")
 
-# --- 3. ENGENHARIA ---
-elif menu == "🛠️ Engenharia":
-    st.header("Engenharia de Dados")
-    t1, t2 = st.tabs(["Limpeza Básica", "Transformações"])
-    with t1:
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Remover Duplicatas"):
-                df_work.drop_duplicates(inplace=True)
-                st.session_state['df_work'] = df_work
-                st.rerun()
-        with c2:
-            col_nan = st.selectbox("Tratar Nulos:", df_work.columns)
-            if st.button("Preencher (Zero/Vazio)"):
-                val = 0 if pd.api.types.is_numeric_dtype(df_work[col_nan]) else ""
-                df_work[col_nan].fillna(val, inplace=True)
-                st.session_state['df_work'] = df_work
-                st.rerun()
-    with t2:
-        col_dummy = st.selectbox("One-Hot Encode:", df_work.select_dtypes(include='object').columns)
-        if st.button("Aplicar Dummies"):
-            df_work = pd.get_dummies(df_work, columns=[col_dummy], drop_first=True, dtype=int)
-            st.session_state['df_work'] = df_work
-            st.rerun()
-    download_csv(df_work)
-
-# --- 4. ESTATÍSTICA & DOE (NOVO!) ---
-elif menu == "⚗️ Estatística & DOE (Novo!)":
-    st.header("Laboratório Estatístico (Statsmodels)")
-    st.markdown("Ferramentas rigorosas para planejamento experimental e validação analítica.")
+# ==============================================================================
+# 4. ESTATÍSTICA & DOE
+# ==============================================================================
+elif menu == "⚗️ Estatística & DOE":
+    st.header("Laboratório Estatístico")
+    st.caption("Statsmodels & Scipy Integration")
     
-    stat_tabs = st.tabs(["📉 Regressão Linear (OLS)", "📊 ANOVA (Variância)", "🧪 Testes de Hipótese"])
+    t_reg, t_anova, t_test = st.tabs(["Regressão OLS", "ANOVA", "Testes T"])
     
-    # --- ABA OLS (REGRESSÃO DETALHADA) ---
-    with stat_tabs[0]:
-        st.subheader("Regressão Linear Múltipla (Relatório Completo)")
-        st.caption("Ideal para curvas de calibração e análise de coeficientes.")
+    with t_reg:
+        target = st.selectbox("Y (Resposta):", df_work.select_dtypes(include='number').columns)
+        feats = st.multiselect("X (Preditores):", df_work.select_dtypes(include='number').columns)
         
-        target_ols = st.selectbox("Variável Resposta (Y):", df_work.select_dtypes(include='number').columns, key='ols_y')
-        features_ols = st.multiselect("Variáveis Preditivas (X):", df_work.select_dtypes(include='number').columns, key='ols_x')
-        
-        if st.button("Calcular Regressão OLS"):
-            if not features_ols:
-                st.error("Selecione as variáveis X.")
-            else:
-                try:
-                    # Prepara dados
-                    X = df_work[features_ols]
-                    X = sm.add_constant(X) # Adiciona intercepto (constante)
-                    y = df_work[target_ols]
-                    
-                    # Ajusta modelo
-                    model = sm.OLS(y, X).fit()
-                    
-                    # Exibe Summary estilo Minitab/SAS
-                    st.text(model.summary())
-                    
-                    # Gráfico de Resíduos
-                    st.markdown("#### Diagnóstico de Resíduos")
-                    residuals = model.resid
-                    fitted = model.fittedvalues
-                    
-                    fig_resid = px.scatter(x=fitted, y=residuals, labels={'x':'Valor Ajustado', 'y':'Resíduo'}, title="Resíduos vs Ajustado")
-                    fig_resid.add_hline(y=0, line_dash="dash", line_color="red")
-                    st.plotly_chart(fig_resid, use_container_width=True)
-                    
-                except Exception as e:
-                    st.error(f"Erro no cálculo: {e}")
+        if st.button("Calcular OLS") and feats:
+            X = sm.add_constant(df_work[feats])
+            model = sm.OLS(df_work[target], X).fit()
+            st.text(model.summary())
+            
+            # Plot Resíduos
+            fig = px.scatter(x=model.fittedvalues, y=model.resid, labels={'x':'Ajustado', 'y':'Resíduo'})
+            fig.add_hline(y=0, line_dash="dash", line_color="red")
+            st.plotly_chart(fig, use_container_width=True)
 
-    # --- ABA ANOVA ---
-    with stat_tabs[1]:
-        st.subheader("Análise de Variância (ANOVA)")
-        st.caption("Verifique a significância de fatores categóricos ou numéricos.")
+    with t_anova:
+        y_an = st.selectbox("Y (Resposta):", df_work.select_dtypes(include='number').columns, key="ay")
+        x_an = st.multiselect("Fatores:", df_work.columns, key="ax")
         
-        response_anova = st.selectbox("Resposta (Y):", df_work.select_dtypes(include='number').columns, key='anova_y')
-        factors_anova = st.multiselect("Fatores (X):", df_work.columns, key='anova_x')
-        
-        if st.button("Gerar Tabela ANOVA"):
-            if not factors_anova:
-                st.error("Selecione pelo menos um fator.")
-            else:
-                try:
-                    # Monta fórmula estilo R: "Y ~ X1 + X2"
-                    formula_str = f"{response_anova} ~ {' + '.join(factors_anova)}"
-                    st.info(f"Modelo: {formula_str}")
-                    
-                    model = ols(formula_str, data=df_work).fit()
-                    anova_table = sm.stats.anova_lm(model, typ=2)
-                    
-                    st.dataframe(anova_table.style.format("{:.4f}"))
-                    
-                    if anova_table['PR(>F)'].min() < 0.05:
-                        st.success("Pelo menos um fator é estatisticamente significativo (p < 0.05).")
-                    else:
-                        st.warning("Nenhum fator apresentou significância estatística.")
-                        
-                except Exception as e:
-                    st.error(f"Erro: {e}. Verifique se nomes de colunas têm espaços ou caracteres especiais.")
+        if st.button("Calcular ANOVA") and x_an:
+            f = f"{y_an} ~ {' + '.join(x_an)}"
+            model = ols(f, data=df_work).fit()
+            table = sm.stats.anova_lm(model, typ=2)
+            st.dataframe(table.style.format("{:.4f}"))
 
-    # --- ABA TESTES T ---
-    with stat_tabs[2]:
-        st.subheader("Teste T de Student (2 Amostras)")
-        
-        col_group = st.selectbox("Coluna de Agrupamento (Categórica, 2 níveis):", df_work.select_dtypes(include=['object', 'int']).columns)
-        col_val = st.selectbox("Variável Numérica:", df_work.select_dtypes(include='number').columns, key='ttest_y')
-        
-        if col_group:
-            groups = df_work[col_group].unique()
-            if len(groups) == 2:
-                group1 = df_work[df_work[col_group] == groups[0]][col_val]
-                group2 = df_work[df_work[col_group] == groups[1]][col_val]
-                
-                if st.button("Executar Teste T"):
-                    t_stat, p_val = stats.ttest_ind(group1, group2)
-                    
-                    c1, c2 = st.columns(2)
-                    c1.metric("Média Grupo 1", f"{group1.mean():.2f}")
-                    c2.metric("Média Grupo 2", f"{group2.mean():.2f}")
-                    
-                    st.markdown("---")
-                    st.metric("P-Valor", f"{p_val:.4f}")
-                    
-                    if p_val < 0.05:
-                        st.success("Diferença Significativa! (Rejeita-se H0)")
-                    else:
-                        st.info("Sem diferença estatisticamente significativa. (Não se rejeita H0)")
-                    
-                    fig_box = px.box(df_work, x=col_group, y=col_val, color=col_group, title="Comparação de Distribuições")
-                    st.plotly_chart(fig_box, use_container_width=True)
+    with t_test:
+        col_grp = st.selectbox("Grupo (2 níveis):", df_work.columns)
+        col_val = st.selectbox("Valor:", df_work.select_dtypes(include='number').columns)
+        if st.button("Teste T"):
+            grps = df_work[col_grp].unique()
+            if len(grps) == 2:
+                g1 = df_work[df_work[col_grp]==grps[0]][col_val]
+                g2 = df_work[df_work[col_grp]==grps[1]][col_val]
+                stat, p = stats.ttest_ind(g1, g2)
+                st.metric("P-Valor", f"{p:.5f}")
+                if p < 0.05: st.success("Diferença Significativa!")
+                else: st.info("Sem diferença significativa.")
+                st.plotly_chart(px.box(df_work, x=col_grp, y=col_val, color=col_grp))
             else:
-                st.warning(f"A coluna de agrupamento deve ter exatamente 2 níveis. Encontrados: {len(groups)}")
+                st.error("A coluna de grupo precisa ter exatamente 2 valores únicos.")
 
-# --- 5. AUTO ML ---
-elif menu == "🤖 AutoML (Preditivo)":
-    st.header("AutoML (Scikit-Learn)")
+# ==============================================================================
+# 5. AUTO ML
+# ==============================================================================
+elif menu == "🤖 AutoML (Tabular)":
+    st.header("AutoML Supervisionado")
     target = st.selectbox("Alvo:", df_work.columns)
     features = st.multiselect("Features:", [c for c in df_work.columns if c != target])
     
-    if st.button("Treinar"):
+    if st.button("Treinar Modelo"):
         X = df_work[features]
         y = df_work[target]
         
+        # Check texto
         if X.select_dtypes(include=['object']).shape[1] > 0:
-            st.error("Converta textos em Engenharia primeiro.")
+            st.error("Erro: Features com texto. Use a aba Engenharia para tratar.")
         else:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
             
             is_reg = pd.api.types.is_numeric_dtype(y) and y.nunique() > 20
             model = RandomForestRegressor() if is_reg else RandomForestClassifier()
@@ -324,101 +391,99 @@ elif menu == "🤖 AutoML (Preditivo)":
             model.fit(X_train, y_train)
             preds = model.predict(X_test)
             
+            c1, c2 = st.columns(2)
             if is_reg:
-                st.metric("R2 Score", f"{r2_score(y_test, preds):.2%}")
-                st.plotly_chart(px.scatter(x=y_test, y=preds, labels={'x':'Real', 'y':'Previsto'}, title="Real vs Previsto"))
+                c1.metric("R2", f"{r2_score(y_test, preds):.2%}")
+                c2.metric("MAE", f"{mean_absolute_error(y_test, preds):.2f}")
+                st.plotly_chart(px.scatter(x=y_test, y=preds, labels={'x':'Real','y':'Previsto'}, title="Real vs Previsto"))
             else:
-                st.metric("Acurácia", f"{accuracy_score(y_test, preds):.2%}")
+                c1.metric("Acurácia", f"{accuracy_score(y_test, preds):.2%}")
                 st.plotly_chart(px.imshow(confusion_matrix(y_test, preds), text_auto=True))
             
-            download_model(model)
+            download_file(model, "modelo_treinado.pkl", "Baixar Modelo (.pkl)")
 
-# --- 6. CLUSTERING ---
-elif menu == "🌀 Clustering (Grupos)":
-    st.header("Clustering (K-Means & PCA)")
-    feats = st.multiselect("Features:", df_work.select_dtypes(include='number').columns)
-    if feats:
-        k = st.slider("Clusters (k):", 2, 10, 3)
-        if st.button("Clusterizar"):
-            X = StandardScaler().fit_transform(df_work[feats].dropna())
-            clusters = KMeans(n_clusters=k).fit_predict(X)
-            
-            pca = PCA(n_components=2).fit_transform(X)
-            fig = px.scatter(x=pca[:,0], y=pca[:,1], color=clusters.astype(str), title="PCA - Visualização dos Grupos")
-            st.plotly_chart(fig)
-            
-            df_work['Cluster'] = clusters
-            download_csv(df_work)
-
-# --- 7. VISUALIZADOR PRO (NOVO!) ---
-elif menu == "🎨 Visualizador Pro (Relatórios)":
-    st.header("Criador de Gráficos para Relatórios")
+# ==============================================================================
+# 6. NLP STUDIO
+# ==============================================================================
+elif menu == "🧠 NLP Studio (Texto)":
+    st.header("Processamento de Linguagem Natural")
     
-    # Layout de 2 Colunas: Controle e Gráfico
-    col_ctrl, col_plot = st.columns([1, 3])
+    col_txt = st.selectbox("Coluna Texto:", df_work.select_dtypes(include='object').columns)
+    col_tgt = st.selectbox("Coluna Alvo:", df_work.columns, index=1)
     
-    with col_ctrl:
-        st.subheader("1. Dados")
-        tipo = st.selectbox("Tipo:", ["Dispersão (Scatter)", "Barra", "Linha", "Histograma", "Boxplot", "Superfície 3D"])
-        x_ax = st.selectbox("Eixo X:", df_work.columns)
-        y_ax = st.selectbox("Eixo Y / Z:", df_work.columns, index=1)
-        col_ax = st.selectbox("Legenda (Cor):", [None] + list(df_work.columns))
+    if st.button("Treinar NLP"):
+        df_nlp = df_work.copy()
+        df_nlp['clean'] = df_nlp[col_txt].apply(dsa_limpa_texto)
         
-        st.markdown("---")
-        st.subheader("2. Estilo (Personalizar)")
+        pipe = Pipeline([
+            ('tfidf', TfidfVectorizer(max_features=2000)),
+            ('clf', LogisticRegression())
+        ])
         
-        custom_title = st.text_input("Título do Gráfico:", f"{tipo} de {y_ax} por {x_ax}")
-        custom_x_label = st.text_input("Rótulo Eixo X:", x_ax)
-        custom_y_label = st.text_input("Rótulo Eixo Y:", y_ax)
+        X_train, X_test, y_train, y_test = train_test_split(df_nlp['clean'], df_nlp[col_tgt], test_size=0.2)
+        pipe.fit(X_train, y_train)
+        acc = accuracy_score(y_test, pipe.predict(X_test))
         
-        color_scheme = st.selectbox("Paleta de Cores:", ["Plotly", "Viridis", "Cividis", "Inferno", "Blues", "Reds"])
-        template_theme = st.selectbox("Tema de Fundo:", ["plotly_white", "plotly_dark", "ggplot2", "seaborn", "simple_white"])
+        st.success(f"Acurácia: {acc:.2%}")
+        st.session_state['nlp_model'] = pipe
+        download_file(pipe, "nlp_model.pkl", "Baixar Modelo NLP")
         
-        width_plot = st.slider("Largura:", 400, 1200, 800)
-        height_plot = st.slider("Altura:", 300, 1000, 600)
+    if 'nlp_model' in st.session_state:
+        txt = st.text_input("Teste ao vivo:")
+        if txt:
+            pred = st.session_state['nlp_model'].predict([dsa_limpa_texto(txt)])[0]
+            st.info(f"Previsão: {pred}")
 
-    with col_plot:
+# ==============================================================================
+# 7. CLUSTERING
+# ==============================================================================
+elif menu == "🌀 Clustering":
+    st.header("Não Supervisionado (K-Means)")
+    feats = st.multiselect("Colunas Numéricas:", df_work.select_dtypes(include='number').columns)
+    k = st.slider("K Clusters:", 2, 10, 3)
+    
+    if st.button("Executar Clustering") and feats:
+        X = StandardScaler().fit_transform(df_work[feats].dropna())
+        model = KMeans(n_clusters=k)
+        clusters = model.fit_predict(X)
+        
+        pca = PCA(n_components=2).fit_transform(X)
+        fig = px.scatter(x=pca[:,0], y=pca[:,1], color=clusters.astype(str), title="PCA Clusters")
+        st.plotly_chart(fig)
+        
+        df_work['Cluster'] = clusters
+        download_file(df_work, "dados_clusterizados.csv", "Baixar CSV com Clusters")
+
+# ==============================================================================
+# 8. VISUALIZADOR PRO
+# ==============================================================================
+elif menu == "🎨 Visualizador Pro":
+    st.header("Construtor de Gráficos")
+    
+    c_conf, c_plot = st.columns([1, 3])
+    with c_conf:
+        tipo = st.selectbox("Tipo:", ["Scatter", "Barra", "Linha", "Hist", "Box", "3D Scatter"])
+        x = st.selectbox("Eixo X:", df_work.columns)
+        y = st.selectbox("Eixo Y/Z:", df_work.columns, index=1)
+        cor = st.selectbox("Cor:", [None] + list(df_work.columns))
+        
+        tema = st.selectbox("Tema:", ["plotly", "plotly_dark", "ggplot2", "seaborn", "simple_white"])
+        titulo = st.text_input("Título:", f"{tipo} de {y} por {x}")
+        
+    with c_plot:
         try:
-            # Lógica de Plotagem
-            if tipo == "Dispersão (Scatter)":
-                fig = px.scatter(df_work, x=x_ax, y=y_ax, color=col_ax, title=custom_title, template=template_theme, color_continuous_scale=color_scheme)
-            
-            elif tipo == "Barra":
-                fig = px.bar(df_work, x=x_ax, y=y_ax, color=col_ax, title=custom_title, template=template_theme, color_continuous_scale=color_scheme)
-            
-            elif tipo == "Linha":
-                fig = px.line(df_work, x=x_ax, y=y_ax, color=col_ax, title=custom_title, template=template_theme)
-            
-            elif tipo == "Histograma":
-                fig = px.histogram(df_work, x=x_ax, color=col_ax, title=custom_title, template=template_theme)
-            
-            elif tipo == "Boxplot":
-                fig = px.box(df_work, x=x_ax, y=y_ax, color=col_ax, title=custom_title, template=template_theme)
-            
-            elif tipo == "Superfície 3D":
-                # Para superfície, precisamos de 3 eixos numéricos ou interpolação
-                if col_ax and pd.api.types.is_numeric_dtype(df_work[col_ax]):
-                    # Scatter 3D é mais seguro para dados brutos experimentais
-                    fig = px.scatter_3d(df_work, x=x_ax, y=y_ax, z=col_ax, color=col_ax, title=custom_title, template=template_theme, color_continuous_scale=color_scheme)
+            if tipo == "Scatter": fig = px.scatter(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
+            elif tipo == "Barra": fig = px.bar(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
+            elif tipo == "Linha": fig = px.line(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
+            elif tipo == "Hist": fig = px.histogram(df_work, x=x, color=cor, template=tema, title=titulo)
+            elif tipo == "Box": fig = px.box(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
+            elif tipo == "3D Scatter": 
+                if pd.api.types.is_numeric_dtype(df_work[cor]):
+                     fig = px.scatter_3d(df_work, x=x, y=y, z=cor, color=cor, template=tema, title=titulo)
                 else:
-                    st.warning("Para 3D, selecione uma coluna numérica no campo 'Legenda (Cor)' para servir como eixo Z.")
-                    fig = px.scatter(df_work, x=x_ax, y=y_ax, title="Fallback 2D")
-
-            # Atualizações de Estilo Fino
-            fig.update_layout(
-                xaxis_title=custom_x_label,
-                yaxis_title=custom_y_label,
-                width=width_plot,
-                height=height_plot,
-                font=dict(size=14)
-            )
+                     st.warning("Para 3D, a Cor (Z) deve ser numérica.")
+                     fig = px.scatter(df_work, x=x, y=y, title="Fallback 2D")
             
-            # Exibir
-            st.plotly_chart(fig)
-            
-            # Botão de Download de Imagem Estática (Para relatórios)
-            # Nota: Streamlit permite download via menu do Plotly, mas podemos adicionar logica extra se necessário
-            st.info("💡 Dica: Clique na câmera 📷 no topo do gráfico para baixar como PNG transparente.")
-            
+            st.plotly_chart(fig, use_container_width=True)
         except Exception as e:
-            st.error(f"Erro ao gerar gráfico: {e}")
+            st.error(f"Erro: {e}")
