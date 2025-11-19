@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-import pickle
+import joblib
 import base64
 import re
 import unicodedata
+import logging
 from io import BytesIO
 
 # --- BIBLIOTECAS CIENTÍFICAS ---
@@ -14,103 +15,166 @@ import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from scipy import stats
 
-# --- MACHINE LEARNING ---
-from sklearn.model_selection import train_test_split
+# --- SKLEARN PIPELINES & PREPROCESSING (MODERNO) ---
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor, GradientBoostingClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score, classification_report, confusion_matrix
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, classification_report, confusion_matrix
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
+
+# --- CONFIGURAÇÃO DE LOGGING ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Data Studio Ultimate", 
+    page_title="Data Studio Pro", 
     layout="wide", 
-    page_icon="🔬",
+    page_icon="🧬",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS PERSONALIZADO (NATIVO + AJUSTES) ---
+# --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
     .main { padding-top: 1rem; }
     div[data-testid="stMetric"] {
-        background-color: rgba(28, 131, 225, 0.1);
-        border: 1px solid rgba(28, 131, 225, 0.2);
+        background-color: rgba(14, 17, 23, 0.05);
+        border: 1px solid rgba(250, 250, 250, 0.1);
         border-radius: 8px;
-        padding: 10px;
+        padding: 15px;
     }
-    h1, h2, h3 { font-family: 'Segoe UI', sans-serif; }
+    /* Ajuste para tabelas */
+    div[data-testid="stDataFrame"] { border: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÕES AUXILIARES ---
-@st.cache_data
+# --- FUNÇÕES AUXILIARES & CACHING ---
+
+@st.cache_data(show_spinner=False)
 def load_data(file):
+    """Carrega dados com cache para performance."""
     try:
         if file.name.endswith("csv"):
-            return pd.read_csv(file)
+            df = pd.read_csv(file)
         else:
-            return pd.read_excel(file)
+            df = pd.read_excel(file)
+        logger.info(f"Dataset carregado: {df.shape}")
+        return df
     except Exception as e:
-        st.error(f"Erro ao ler arquivo: {e}")
+        st.error(f"Erro fatal ao ler arquivo: {e}")
         return None
 
-def download_file(object_to_download, filename, label="Baixar Arquivo"):
-    if isinstance(object_to_download, pd.DataFrame):
-        data = object_to_download.to_csv(index=False).encode('utf-8')
-        mime = "text/csv"
-    else:
-        data = pickle.dumps(object_to_download)
-        data = base64.b64encode(data).decode()
-        href = f'<a href="data:file/output_model;base64,{data}" download="{filename}">📥 {label}</a>'
-        st.markdown(href, unsafe_allow_html=True)
-        return
-
-    st.download_button(label=f"📥 {label}", data=data, file_name=filename, mime=mime)
+def to_bytes(obj):
+    """Serializa modelos usando joblib (padrão profissional)."""
+    bio = BytesIO()
+    joblib.dump(obj, bio)
+    bio.seek(0)
+    return bio.read()
 
 def dsa_limpa_texto(texto):
+    """Limpeza de texto robusta para NLP."""
     if not isinstance(texto, str): return ""
     texto = ''.join(c for c in unicodedata.normalize('NFKD', texto) if unicodedata.category(c) != 'Mn')
     return re.sub(r'[^a-z\s]', '', texto.lower()).strip()
 
-# --- SIDEBAR ---
+# --- BRAIN: FUNÇÕES DE AUTOML AVANÇADO ---
+
+def build_preprocessor(X):
+    """Cria um ColumnTransformer inteligente que trata nulos e categorias automaticamente."""
+    num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+
+    # Pipeline Numérico: Imputa média -> Normaliza
+    num_pipe = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
+
+    # Pipeline Categórico: Imputa moda -> OneHot
+    cat_pipe = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
+
+    preprocessor = ColumnTransformer([
+        ('num', num_pipe, num_cols),
+        ('cat', cat_pipe, cat_cols)
+    ], remainder='drop')
+    
+    return preprocessor
+
+def train_advanced_model(X, y, model_type='Random Forest', is_regression=True):
+    """Treina modelo com Pipeline completo e RandomizedSearchCV."""
+    
+    preprocessor = build_preprocessor(X)
+    
+    if is_regression:
+        if model_type == 'Random Forest':
+            clf = RandomForestRegressor(n_jobs=-1)
+            param_dist = {'model__n_estimators': [50, 100, 200], 'model__max_depth': [None, 10, 20]}
+        else:
+            clf = GradientBoostingRegressor()
+            param_dist = {'model__n_estimators': [50, 100], 'model__learning_rate': [0.01, 0.1]}
+    else:
+        if model_type == 'Random Forest':
+            clf = RandomForestClassifier(n_jobs=-1)
+            param_dist = {'model__n_estimators': [50, 100, 200], 'model__max_depth': [None, 10, 20]}
+        else:
+            clf = GradientBoostingClassifier()
+            param_dist = {'model__n_estimators': [50, 100], 'model__learning_rate': [0.01, 0.1]}
+    
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('model', clf)
+    ])
+    
+    # Busca de Hiperparâmetros (AutoML Real)
+    search = RandomizedSearchCV(pipeline, param_distributions=param_dist, n_iter=5, cv=3, n_jobs=-1, verbose=1)
+    search.fit(X, y)
+    
+    return search.best_estimator_, search.best_score_
+
+# --- SIDEBAR & NAVEGAÇÃO ---
 with st.sidebar:
-    st.title("🔬 Data Studio")
-    st.caption("v8.0 Definitive Edition")
+    st.title("🧬 Data Studio")
+    st.caption("v9.0 Professional Edition")
     st.markdown("---")
     
-    uploaded_file = st.file_uploader("Dataset (CSV/Excel)", type=["csv", "xlsx"])
+    uploaded_file = st.file_uploader("Carregar Dataset", type=["csv", "xlsx"])
     
     if uploaded_file:
-        # Gestão de Estado
+        # Lógica de Sessão Segura
         if 'df_raw' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
             df = load_data(uploaded_file)
             if df is not None:
                 st.session_state['df_raw'] = df
                 st.session_state['df_work'] = df.copy()
                 st.session_state['file_name'] = uploaded_file.name
-                st.toast("Dataset carregado!", icon="✅")
+                st.toast("Dados carregados com sucesso!", icon="✅")
         
         if 'df_work' in st.session_state:
             df_work = st.session_state['df_work']
-            st.info(f"L: {df_work.shape[0]} | C: {df_work.shape[1]}")
+            st.info(f"Linhas: {df_work.shape[0]} | Colunas: {df_work.shape[1]}")
             
-            if st.button("🔄 Restaurar Original"):
+            if st.button("🔄 Resetar Dados"):
                 st.session_state['df_work'] = st.session_state['df_raw'].copy()
                 st.rerun()
             
             st.markdown("---")
-            menu = st.radio("Fluxo de Trabalho:", [
-                "🏠 Dashboard",
-                "🛠️ Engenharia de Dados",     # Restaurado Completo
-                "🔬 Explorador & Correlação",
-                "⚗️ Estatística & DOE",        # Mantido v7
-                "🤖 AutoML (Tabular)",
-                "🧠 NLP Studio (Texto)",
+            menu = st.radio("Módulos:", [
+                "🏠 Dashboard & Resumo",
+                "🛠️ Engenharia Manual",     
+                "🔬 Explorador Visual",
+                "⚗️ Laboratório Estatístico", 
+                "🤖 AutoML (Pipelines)",
+                "🧠 NLP Studio",
                 "🌀 Clustering",
                 "🎨 Visualizador Pro"
             ])
@@ -119,168 +183,165 @@ with st.sidebar:
 
 # --- HOME ---
 if not uploaded_file:
-    st.title("Data Studio Ultimate v8.0")
+    st.title("Data Studio Pro v9.0")
     st.markdown("""
-    ### A Ferramenta Definitiva para Cientistas de Dados.
+    ### A Workstation Definitiva de Ciência de Dados.
     
-    Esta versão consolida todas as funcionalidades em uma interface robusta.
+    Esta ferramenta une a flexibilidade da manipulação manual com a robustez de pipelines profissionais de Machine Learning.
     
-    1.  **Engenharia Completa:** Limpeza, Tipagem, Nulos, Mapeamento Manual.
-    2.  **Estatística (Chemometrics):** ANOVA, OLS, Testes de Hipótese.
-    3.  **Machine Learning:** AutoML, NLP e Clustering.
-    4.  **Visualização:** Gráficos customizáveis para publicação.
+    **Funcionalidades Principais:**
+    1.  **Engenharia Manual:** Limpeza, renomeação e tratamento de nulos para exportação.
+    2.  **Estatística (Chemometrics):** ANOVA, OLS, Testes T (Statsmodels/Scipy).
+    3.  **AutoML Profissional:** Pipelines com `ColumnTransformer` e `RandomizedSearchCV`.
+    4.  **NLP & Clustering:** Ferramentas especializadas para texto e grupos.
     
-    👈 **Carregue seu arquivo para começar.**
+    👈 **Carregue seu arquivo para iniciar.**
     """)
     st.stop()
 
 # ==============================================================================
-# 1. DASHBOARD
+# 1. DASHBOARD & RESUMO (RESTAURADO)
 # ==============================================================================
-if menu == "🏠 Dashboard":
-    st.header("Visão Geral")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Registros", df_work.shape[0])
-    c2.metric("Total Colunas", df_work.shape[1])
-    c3.metric("Dados Faltantes", df_work.isna().sum().sum())
+if menu == "🏠 Dashboard & Resumo":
+    st.header("Visão Geral dos Dados")
     
-    st.subheader("Amostra de Dados")
-    st.dataframe(df_work.head(50), use_container_width=True)
+    # Métricas de Topo
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Registros", df_work.shape[0])
+    c2.metric("Colunas", df_work.shape[1])
+    c3.metric("Células Vazias", df_work.isna().sum().sum())
+    c4.metric("Duplicatas", df_work.duplicated().sum())
     
-    st.subheader("Tipos de Dados")
-    dtypes = df_work.dtypes.value_counts().reset_index()
-    dtypes.columns = ['Tipo', 'Contagem']
-    dtypes['Tipo'] = dtypes['Tipo'].astype(str)
-    st.plotly_chart(px.pie(dtypes, names='Tipo', values='Contagem', hole=0.4), use_container_width=True)
+    col_L, col_R = st.columns([2, 1])
+    
+    with col_L:
+        st.subheader("Amostra de Dados")
+        st.dataframe(df_work.head(50), use_container_width=True, height=400)
+        
+    with col_R:
+        st.subheader("Tipos de Variáveis")
+        dtypes = df_work.dtypes.value_counts().reset_index()
+        dtypes.columns = ['Tipo', 'Qtd']
+        dtypes['Tipo'] = dtypes['Tipo'].astype(str)
+        fig = px.pie(dtypes, names='Tipo', values='Qtd', hole=0.4)
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.markdown("---")
+    st.subheader("📊 Estatísticas Descritivas (Summary)")
+    st.markdown("Resumo estatístico completo das variáveis numéricas e categóricas.")
+    st.dataframe(df_work.describe(include='all'), use_container_width=True)
 
 # ==============================================================================
-# 2. ENGENHARIA DE DADOS (COMPLETO RESTAURADO)
+# 2. ENGENHARIA MANUAL (COMPLETO)
 # ==============================================================================
-elif menu == "🛠️ Engenharia de Dados":
+elif menu == "🛠️ Engenharia Manual":
     st.header("Engenharia de Dados & Limpeza")
+    st.caption("Manipule seus dados manualmente antes da modelagem ou para exportação.")
     
-    tab_struct, tab_clean, tab_transf = st.tabs(["1. Estrutura & Tipos", "2. Limpeza & Nulos", "3. Transformação"])
+    t1, t2, t3 = st.tabs(["Estrutura & Tipos", "Limpeza de Nulos", "Transformações"])
     
-    # --- TAB 1: ESTRUTURA ---
-    with tab_struct:
+    # --- T1: Estrutura ---
+    with t1:
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Renomear Colunas")
-            col_rename = st.selectbox("Coluna:", df_work.columns)
-            new_name = st.text_input("Novo Nome:", value=col_rename)
+            st.subheader("Gerenciar Colunas")
+            # Renomear
+            col_ren = st.selectbox("Renomear Coluna:", df_work.columns)
+            new_name = st.text_input("Novo nome:", value=col_ren)
             if st.button("Aplicar Renomeação"):
-                df_work.rename(columns={col_rename: new_name}, inplace=True)
+                df_work.rename(columns={col_ren: new_name}, inplace=True)
                 st.session_state['df_work'] = df_work
                 st.rerun()
-                
-            st.divider()
-            st.subheader("Excluir Colunas")
-            cols_drop = st.multiselect("Selecione para apagar:", df_work.columns)
-            if st.button("🗑️ Excluir Colunas Selecionadas"):
-                df_work.drop(columns=cols_drop, inplace=True)
+            
+            # Excluir
+            cols_del = st.multiselect("Excluir Colunas:", df_work.columns)
+            if st.button("🗑️ Deletar Selecionadas"):
+                df_work.drop(columns=cols_del, inplace=True)
                 st.session_state['df_work'] = df_work
                 st.rerun()
                 
         with c2:
-            st.subheader("Converter Tipos de Dados")
-            col_convert = st.selectbox("Selecione a Coluna:", df_work.columns)
-            target_type = st.selectbox("Para qual tipo?", ["Numérico (Float)", "Texto (String)", "Data (DateTime)"])
+            st.subheader("Tipagem de Dados")
+            col_type = st.selectbox("Coluna:", df_work.columns, key="type_col")
+            to_type = st.selectbox("Converter para:", ["Numérico", "Texto", "Data"])
             
             if st.button("Converter Tipo"):
                 try:
-                    if "Numérico" in target_type:
-                        df_work[col_convert] = pd.to_numeric(df_work[col_convert], errors='coerce')
-                    elif "Texto" in target_type:
-                        df_work[col_convert] = df_work[col_convert].astype(str)
-                    elif "Data" in target_type:
-                        df_work[col_convert] = pd.to_datetime(df_work[col_convert], errors='coerce')
+                    if to_type == "Numérico":
+                        df_work[col_type] = pd.to_numeric(df_work[col_type], errors='coerce')
+                    elif to_type == "Data":
+                        df_work[col_type] = pd.to_datetime(df_work[col_type], errors='coerce')
+                    else:
+                        df_work[col_type] = df_work[col_type].astype(str)
                     st.session_state['df_work'] = df_work
-                    st.success(f"Coluna {col_convert} convertida!")
+                    st.success("Convertido!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Erro na conversão: {e}")
+                    st.error(f"Erro: {e}")
 
-    # --- TAB 2: LIMPEZA ---
-    with tab_clean:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Remover Duplicatas")
-            if st.button("Detectar e Remover Duplicatas"):
-                antes = len(df_work)
+    # --- T2: Limpeza ---
+    with t2:
+        c_dup, c_null = st.columns(2)
+        with c_dup:
+            st.subheader("Duplicatas")
+            if st.button("Remover Duplicatas"):
+                old = len(df_work)
                 df_work.drop_duplicates(inplace=True)
-                depois = len(df_work)
                 st.session_state['df_work'] = df_work
-                st.success(f"Removidas {antes - depois} linhas duplicadas.")
+                st.success(f"Removidas {old - len(df_work)} linhas.")
                 st.rerun()
-                
-        with c2:
-            st.subheader("Tratamento Avançado de Nulos")
+        
+        with c_null:
+            st.subheader("Tratar Nulos (Manual)")
             cols_null = df_work.columns[df_work.isna().any()].tolist()
-            
             if cols_null:
-                col_target = st.selectbox("Coluna com Nulos:", cols_null)
-                method = st.selectbox("Método de Tratamento:", 
-                    ["Preencher com 0", "Preencher com Média", "Preencher com Mediana", "Preencher com Moda", "Remover Linhas", "Valor Personalizado"])
+                target_null = st.selectbox("Coluna com Nulos:", cols_null)
+                method = st.selectbox("Ação:", ["Preencher com 0", "Média", "Mediana", "Moda", "Remover Linhas"])
                 
-                custom_val = None
-                if method == "Valor Personalizado":
-                    custom_val = st.text_input("Digite o valor:")
-                
-                if st.button("Aplicar Tratamento de Nulos"):
+                if st.button("Aplicar Tratamento"):
                     if method == "Remover Linhas":
-                        df_work.dropna(subset=[col_target], inplace=True)
+                        df_work.dropna(subset=[target_null], inplace=True)
                     elif method == "Preencher com 0":
-                        df_work[col_target].fillna(0, inplace=True)
-                    elif method == "Preencher com Média" and pd.api.types.is_numeric_dtype(df_work[col_target]):
-                        df_work[col_target].fillna(df_work[col_target].mean(), inplace=True)
-                    elif method == "Preencher com Mediana" and pd.api.types.is_numeric_dtype(df_work[col_target]):
-                        df_work[col_target].fillna(df_work[col_target].median(), inplace=True)
-                    elif method == "Preencher com Moda":
-                        df_work[col_target].fillna(df_work[col_target].mode()[0], inplace=True)
-                    elif method == "Valor Personalizado" and custom_val:
-                        df_work[col_target].fillna(custom_val, inplace=True)
+                        df_work[target_null].fillna(0, inplace=True)
+                    elif method == "Média" and pd.api.types.is_numeric_dtype(df_work[target_null]):
+                        df_work[target_null].fillna(df_work[target_null].mean(), inplace=True)
+                    elif method == "Mediana" and pd.api.types.is_numeric_dtype(df_work[target_null]):
+                        df_work[target_null].fillna(df_work[target_null].median(), inplace=True)
+                    elif method == "Moda":
+                        df_work[target_null].fillna(df_work[target_null].mode()[0], inplace=True)
                     
                     st.session_state['df_work'] = df_work
-                    st.success("Tratamento aplicado!")
                     st.rerun()
             else:
-                st.success("O Dataset não possui valores nulos neste momento.")
+                st.success("Sem nulos no dataset atual.")
 
-    # --- TAB 3: TRANSFORMAÇÃO ---
-    with tab_transf:
-        st.subheader("Feature Engineering")
+    # --- T3: Transformações ---
+    with t3:
+        st.subheader("Manipulação Avançada")
+        mode = st.radio("Modo:", ["One-Hot Encoding (Dummies)", "Mapeamento Manual (Labels)"])
         
-        type_transf = st.radio("Ferramenta:", ["One-Hot Encoding (Dummies)", "Normalização (StandardScaler)", "Mapeamento Manual"])
-        
-        if type_transf == "One-Hot Encoding (Dummies)":
-            col_dummy = st.selectbox("Coluna Categórica:", df_work.select_dtypes(include='object').columns)
+        if mode == "One-Hot Encoding (Dummies)":
+            col_dum = st.selectbox("Coluna Categórica:", df_work.select_dtypes(include='object').columns)
             if st.button("Gerar Dummies"):
-                df_work = pd.get_dummies(df_work, columns=[col_dummy], drop_first=True, dtype=int)
+                df_work = pd.get_dummies(df_work, columns=[col_dum], drop_first=True, dtype=int)
                 st.session_state['df_work'] = df_work
                 st.rerun()
                 
-        elif type_transf == "Normalização (StandardScaler)":
-            cols_norm = st.multiselect("Colunas para Normalizar:", df_work.select_dtypes(include='number').columns)
-            if st.button("Aplicar Normalização") and cols_norm:
-                scaler = StandardScaler()
-                df_work[cols_norm] = scaler.fit_transform(df_work[cols_norm])
-                st.session_state['df_work'] = df_work
-                st.rerun()
-                
-        elif type_transf == "Mapeamento Manual":
+        else:
             col_map = st.selectbox("Coluna para Mapear:", df_work.columns)
-            unique_vals = df_work[col_map].unique()
-            if len(unique_vals) < 50:
-                st.write("Defina os valores:")
+            uniques = df_work[col_map].unique()
+            if len(uniques) < 50:
                 mapping = {}
-                cols_ui = st.columns(2)
-                for i, val in enumerate(unique_vals):
-                    with cols_ui[i%2]:
-                        new_val = st.text_input(f"Valor para '{val}':", key=f"map_{val}")
-                        if new_val: mapping[val] = new_val
+                st.write("Defina os valores:")
+                cols_ui = st.columns(3)
+                for i, val in enumerate(uniques):
+                    with cols_ui[i%3]:
+                        new_v = st.text_input(f"'{val}' vira:", key=f"m_{val}")
+                        if new_v: mapping[val] = new_v
                 
-                if st.button("Aplicar Mapeamento"):
-                    # Tenta converter para numero se possivel
+                if st.button("Aplicar Mapa"):
+                    # Tenta converter valores para float se possível
                     final_map = {}
                     for k, v in mapping.items():
                         try: final_map[k] = float(v)
@@ -290,200 +351,245 @@ elif menu == "🛠️ Engenharia de Dados":
                     st.session_state['df_work'] = df_work
                     st.rerun()
             else:
-                st.warning("Muitos valores únicos para mapeamento manual.")
-    
+                st.warning("Muitos valores únicos para mapear manualmente.")
+
     st.divider()
-    download_file(df_work, "dados_engenharia.csv", "Baixar Dados Atuais (CSV)")
+    # Exportar CSV Manipulado
+    csv = df_work.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Baixar CSV Processado", csv, "dados_processados.csv", "text/csv")
 
 # ==============================================================================
-# 3. EXPLORADOR
+# 3. EXPLORADOR VISUAL
 # ==============================================================================
-elif menu == "🔬 Explorador & Correlação":
-    st.header("Análise Exploratória")
-    t1, t2 = st.tabs(["Distribuições", "Correlações"])
+elif menu == "🔬 Explorador Visual":
+    st.header("Exploração Gráfica")
+    t1, t2 = st.tabs(["Histogramas & Barras", "Correlações"])
     
     with t1:
-        col_sel = st.selectbox("Variável:", df_work.columns)
-        if pd.api.types.is_numeric_dtype(df_work[col_sel]):
-            fig = px.histogram(df_work, x=col_sel, marginal="box", title=f"Hist: {col_sel}")
+        col_vis = st.selectbox("Variável:", df_work.columns)
+        if pd.api.types.is_numeric_dtype(df_work[col_vis]):
+            fig = px.histogram(df_work, x=col_vis, marginal="box", title=f"Distribuição: {col_vis}")
         else:
-            fig = px.bar(df_work[col_sel].value_counts().head(20), title=f"Contagem: {col_sel}")
+            fig = px.bar(df_work[col_vis].value_counts().head(20), title=f"Top Categorias: {col_vis}")
         st.plotly_chart(fig, use_container_width=True)
         
     with t2:
         df_num = df_work.select_dtypes(include='number')
         if len(df_num.columns) > 1:
-            fig = px.imshow(df_num.corr(), text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
-            st.plotly_chart(fig, use_container_width=True, height=700)
+            corr = df_num.corr()
+            fig = px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r", aspect="auto")
+            st.plotly_chart(fig, use_container_width=True, height=600)
         else:
-            st.warning("Colunas numéricas insuficientes.")
+            st.warning("Colunas numéricas insuficientes para correlação.")
 
 # ==============================================================================
-# 4. ESTATÍSTICA & DOE
+# 4. ESTATÍSTICA (CHEMOMETRICS) - MANTIDO
 # ==============================================================================
-elif menu == "⚗️ Estatística & DOE":
-    st.header("Laboratório Estatístico")
-    st.caption("Statsmodels & Scipy Integration")
+elif menu == "⚗️ Laboratório Estatístico":
+    st.header("Estatística & Planejamento (Statsmodels)")
     
-    t_reg, t_anova, t_test = st.tabs(["Regressão OLS", "ANOVA", "Testes T"])
+    t_ols, t_anova, t_ttest = st.tabs(["Regressão OLS", "ANOVA", "Teste T"])
     
-    with t_reg:
-        target = st.selectbox("Y (Resposta):", df_work.select_dtypes(include='number').columns)
-        feats = st.multiselect("X (Preditores):", df_work.select_dtypes(include='number').columns)
+    with t_ols:
+        st.subheader("Regressão Linear Múltipla")
+        y_ols = st.selectbox("Y (Resposta):", df_work.select_dtypes(include='number').columns)
+        x_ols = st.multiselect("X (Preditores):", df_work.select_dtypes(include='number').columns)
         
-        if st.button("Calcular OLS") and feats:
-            X = sm.add_constant(df_work[feats])
-            model = sm.OLS(df_work[target], X).fit()
-            st.text(model.summary())
-            
-            # Plot Resíduos
-            fig = px.scatter(x=model.fittedvalues, y=model.resid, labels={'x':'Ajustado', 'y':'Resíduo'})
-            fig.add_hline(y=0, line_dash="dash", line_color="red")
-            st.plotly_chart(fig, use_container_width=True)
+        if st.button("Calcular OLS") and x_ols:
+            try:
+                # Statsmodels lida mal com Nulos, dropamos temporariamente para o calculo
+                df_ols = df_work[[y_ols] + x_ols].dropna()
+                X = sm.add_constant(df_ols[x_ols])
+                model = sm.OLS(df_ols[y_ols], X).fit()
+                st.text(model.summary())
+                
+                # Plot Resíduos
+                fig = px.scatter(x=model.fittedvalues, y=model.resid, labels={'x':'Ajustado', 'y':'Resíduo'})
+                fig.add_hline(y=0, line_dash="dash", line_color="red")
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Erro OLS: {e}")
 
     with t_anova:
-        y_an = st.selectbox("Y (Resposta):", df_work.select_dtypes(include='number').columns, key="ay")
-        x_an = st.multiselect("Fatores:", df_work.columns, key="ax")
+        st.subheader("ANOVA (One-Way / N-Way)")
+        y_an = st.selectbox("Y:", df_work.select_dtypes(include='number').columns, key="an_y")
+        x_an = st.multiselect("Fatores:", df_work.columns, key="an_x")
         
         if st.button("Calcular ANOVA") and x_an:
-            f = f"{y_an} ~ {' + '.join(x_an)}"
-            model = ols(f, data=df_work).fit()
-            table = sm.stats.anova_lm(model, typ=2)
-            st.dataframe(table.style.format("{:.4f}"))
+            try:
+                # Fórmula estilo R
+                safe_cols = {col: f"C({col})" if df_work[col].dtype == 'object' else col for col in x_an}
+                formula_terms = [safe_cols[col] for col in x_an]
+                f = f"{y_an} ~ {' + '.join(formula_terms)}"
+                
+                model = ols(f, data=df_work.dropna(subset=[y_an] + x_an)).fit()
+                table = sm.stats.anova_lm(model, typ=2)
+                st.dataframe(table.style.format("{:.4f}"))
+            except Exception as e:
+                st.error(f"Erro ANOVA: {e}. Tente renomear colunas para remover espaços.")
 
-    with t_test:
-        col_grp = st.selectbox("Grupo (2 níveis):", df_work.columns)
-        col_val = st.selectbox("Valor:", df_work.select_dtypes(include='number').columns)
-        if st.button("Teste T"):
-            grps = df_work[col_grp].unique()
-            if len(grps) == 2:
-                g1 = df_work[df_work[col_grp]==grps[0]][col_val]
-                g2 = df_work[df_work[col_grp]==grps[1]][col_val]
+    with t_ttest:
+        st.subheader("Teste T de Student")
+        grp = st.selectbox("Coluna Grupo (2 níveis):", df_work.columns)
+        val = st.selectbox("Variável Numérica:", df_work.select_dtypes(include='number').columns)
+        
+        if st.button("Executar Teste T"):
+            groups = df_work[grp].dropna().unique()
+            if len(groups) == 2:
+                g1 = df_work[df_work[grp] == groups[0]][val].dropna()
+                g2 = df_work[df_work[grp] == groups[1]][val].dropna()
                 stat, p = stats.ttest_ind(g1, g2)
+                
+                c1, c2 = st.columns(2)
+                c1.metric(f"Média {groups[0]}", f"{g1.mean():.2f}")
+                c2.metric(f"Média {groups[1]}", f"{g2.mean():.2f}")
                 st.metric("P-Valor", f"{p:.5f}")
-                if p < 0.05: st.success("Diferença Significativa!")
+                
+                if p < 0.05: st.success("Diferença Estatística Significativa!")
                 else: st.info("Sem diferença significativa.")
-                st.plotly_chart(px.box(df_work, x=col_grp, y=col_val, color=col_grp))
             else:
-                st.error("A coluna de grupo precisa ter exatamente 2 valores únicos.")
+                st.error("A coluna de grupo deve ter exatamente 2 valores únicos.")
 
 # ==============================================================================
-# 5. AUTO ML
+# 5. AUTOML PROFISSIONAL (PIPELINES + SEARCH)
 # ==============================================================================
-elif menu == "🤖 AutoML (Tabular)":
-    st.header("AutoML Supervisionado")
-    target = st.selectbox("Alvo:", df_work.columns)
+elif menu == "🤖 AutoML (Pipelines)":
+    st.header("AutoML com Pipelines Profissionais")
+    st.markdown("Utiliza `ColumnTransformer` para tratar nulos/categorias automaticamente e `RandomizedSearchCV` para otimização.")
+    
+    target = st.selectbox("Target (Alvo):", df_work.columns)
     features = st.multiselect("Features:", [c for c in df_work.columns if c != target])
     
-    if st.button("Treinar Modelo"):
-        X = df_work[features]
-        y = df_work[target]
+    if not features:
+        st.info("Selecione features para treinar.")
+    else:
+        model_arch = st.selectbox("Algoritmo:", ["Random Forest", "Gradient Boosting"])
         
-        # Check texto
-        if X.select_dtypes(include=['object']).shape[1] > 0:
-            st.error("Erro: Features com texto. Use a aba Engenharia para tratar.")
-        else:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-            
-            is_reg = pd.api.types.is_numeric_dtype(y) and y.nunique() > 20
-            model = RandomForestRegressor() if is_reg else RandomForestClassifier()
-            
-            model.fit(X_train, y_train)
-            preds = model.predict(X_test)
-            
-            c1, c2 = st.columns(2)
-            if is_reg:
-                c1.metric("R2", f"{r2_score(y_test, preds):.2%}")
-                c2.metric("MAE", f"{mean_absolute_error(y_test, preds):.2f}")
-                st.plotly_chart(px.scatter(x=y_test, y=preds, labels={'x':'Real','y':'Previsto'}, title="Real vs Previsto"))
-            else:
-                c1.metric("Acurácia", f"{accuracy_score(y_test, preds):.2%}")
-                st.plotly_chart(px.imshow(confusion_matrix(y_test, preds), text_auto=True))
-            
-            download_file(model, "modelo_treinado.pkl", "Baixar Modelo (.pkl)")
+        if st.button("🚀 Iniciar Treinamento Robusto"):
+            try:
+                with st.spinner("Otimizando Pipeline de Machine Learning..."):
+                    X = df_work[features]
+                    y = df_work[target]
+                    
+                    # Detectar problema
+                    is_reg = pd.api.types.is_numeric_dtype(y) and y.nunique() > 20
+                    
+                    # Split
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                    
+                    # Treinar usando a função avançada
+                    model, score = train_advanced_model(X_train, y_train, model_arch, is_reg)
+                    
+                    # Avaliar
+                    preds = model.predict(X_test)
+                    
+                    st.success("Treinamento Concluído!")
+                    st.write(f"Melhor Score (Validação Cruzada): {score:.4f}")
+                    
+                    # Métricas Teste
+                    c1, c2 = st.columns(2)
+                    if is_reg:
+                        c1.metric("R2 (Teste)", f"{r2_score(y_test, preds):.2%}")
+                        c2.metric("MAE", f"{mean_absolute_error(y_test, preds):.2f}")
+                        st.plotly_chart(px.scatter(x=y_test, y=preds, labels={'x':'Real', 'y':'Previsto'}, title="Real vs Previsto"))
+                    else:
+                        c1.metric("Acurácia", f"{accuracy_score(y_test, preds):.2%}")
+                        st.text("Relatório de Classificação:")
+                        st.text(classification_report(y_test, preds))
+                        st.plotly_chart(px.imshow(confusion_matrix(y_test, preds), text_auto=True, title="Matriz Confusão"))
+                    
+                    # Download Joblib (Profissional)
+                    model_bytes = to_bytes(model)
+                    st.download_button("📥 Baixar Pipeline Completo (.joblib)", data=model_bytes, file_name="pipeline_model.joblib")
+                    
+            except Exception as e:
+                st.error(f"Erro no treinamento: {e}")
 
 # ==============================================================================
 # 6. NLP STUDIO
 # ==============================================================================
-elif menu == "🧠 NLP Studio (Texto)":
-    st.header("Processamento de Linguagem Natural")
+elif menu == "🧠 NLP Studio":
+    st.header("Processamento de Texto (NLP)")
+    col_txt = st.selectbox("Coluna de Texto:", df_work.select_dtypes(include='object').columns)
+    col_tgt = st.selectbox("Target (Classe):", df_work.columns, index=1 if len(df_work.columns)>1 else 0)
     
-    col_txt = st.selectbox("Coluna Texto:", df_work.select_dtypes(include='object').columns)
-    col_tgt = st.selectbox("Coluna Alvo:", df_work.columns, index=1)
-    
-    if st.button("Treinar NLP"):
-        df_nlp = df_work.copy()
-        df_nlp['clean'] = df_nlp[col_txt].apply(dsa_limpa_texto)
-        
-        pipe = Pipeline([
-            ('tfidf', TfidfVectorizer(max_features=2000)),
-            ('clf', LogisticRegression())
-        ])
-        
-        X_train, X_test, y_train, y_test = train_test_split(df_nlp['clean'], df_nlp[col_tgt], test_size=0.2)
-        pipe.fit(X_train, y_train)
-        acc = accuracy_score(y_test, pipe.predict(X_test))
-        
-        st.success(f"Acurácia: {acc:.2%}")
-        st.session_state['nlp_model'] = pipe
-        download_file(pipe, "nlp_model.pkl", "Baixar Modelo NLP")
-        
+    if st.button("Treinar Pipeline NLP"):
+        with st.spinner("Vetorizando e Treinando..."):
+            # Limpeza On-the-fly
+            texts = df_work[col_txt].apply(dsa_limpa_texto)
+            targets = df_work[col_tgt]
+            
+            pipeline = Pipeline([
+                ('tfidf', TfidfVectorizer(max_features=3000, ngram_range=(1,2))),
+                ('clf', LogisticRegression(max_iter=1000))
+            ])
+            
+            X_train, X_test, y_train, y_test = train_test_split(texts, targets, test_size=0.2)
+            pipeline.fit(X_train, y_train)
+            
+            acc = accuracy_score(y_test, pipeline.predict(X_test))
+            st.success(f"Modelo NLP Treinado! Acurácia: {acc:.2%}")
+            
+            # Salvar sessão e download
+            st.session_state['nlp_model'] = pipeline
+            st.download_button("📥 Baixar Modelo NLP", data=to_bytes(pipeline), file_name="nlp_model.joblib")
+            
     if 'nlp_model' in st.session_state:
-        txt = st.text_input("Teste ao vivo:")
+        txt = st.text_input("Teste seu modelo NLP:")
         if txt:
-            pred = st.session_state['nlp_model'].predict([dsa_limpa_texto(txt)])[0]
-            st.info(f"Previsão: {pred}")
+            clean = dsa_limpa_texto(txt)
+            pred = st.session_state['nlp_model'].predict([clean])[0]
+            st.info(f"Classificação: **{pred}**")
 
 # ==============================================================================
-# 7. CLUSTERING
+# 7. CLUSTERING & VISUALIZADOR (MANTIDOS)
 # ==============================================================================
 elif menu == "🌀 Clustering":
-    st.header("Não Supervisionado (K-Means)")
-    feats = st.multiselect("Colunas Numéricas:", df_work.select_dtypes(include='number').columns)
-    k = st.slider("K Clusters:", 2, 10, 3)
+    st.header("Clustering (K-Means)")
+    feats = st.multiselect("Features Numéricas:", df_work.select_dtypes(include='number').columns)
+    k = st.slider("Clusters (K):", 2, 10, 3)
     
-    if st.button("Executar Clustering") and feats:
-        X = StandardScaler().fit_transform(df_work[feats].dropna())
-        model = KMeans(n_clusters=k)
-        clusters = model.fit_predict(X)
+    if st.button("Clusterizar") and feats:
+        X = df_work[feats].dropna()
+        # Pipeline de Clustering
+        pipe_cl = Pipeline([
+            ('scaler', StandardScaler()),
+            ('kmeans', KMeans(n_clusters=k))
+        ])
+        clusters = pipe_cl.fit_predict(X)
         
-        pca = PCA(n_components=2).fit_transform(X)
-        fig = px.scatter(x=pca[:,0], y=pca[:,1], color=clusters.astype(str), title="PCA Clusters")
+        # PCA para visualização
+        pca = PCA(n_components=2).fit_transform(Pipeline([('s', StandardScaler())]).fit_transform(X))
+        
+        fig = px.scatter(x=pca[:,0], y=pca[:,1], color=clusters.astype(str), title="PCA dos Clusters")
         st.plotly_chart(fig)
         
-        df_work['Cluster'] = clusters
-        download_file(df_work, "dados_clusterizados.csv", "Baixar CSV com Clusters")
+        df_work.loc[X.index, 'Cluster'] = clusters
+        st.success("Clusters adicionados ao dataset!")
 
-# ==============================================================================
-# 8. VISUALIZADOR PRO
-# ==============================================================================
 elif menu == "🎨 Visualizador Pro":
-    st.header("Construtor de Gráficos")
-    
+    st.header("Gráficos Customizáveis")
     c_conf, c_plot = st.columns([1, 3])
     with c_conf:
-        tipo = st.selectbox("Tipo:", ["Scatter", "Barra", "Linha", "Hist", "Box", "3D Scatter"])
+        tipo = st.selectbox("Tipo:", ["Scatter", "Barra", "Linha", "Hist", "Box", "3D"])
         x = st.selectbox("Eixo X:", df_work.columns)
         y = st.selectbox("Eixo Y/Z:", df_work.columns, index=1)
         cor = st.selectbox("Cor:", [None] + list(df_work.columns))
-        
-        tema = st.selectbox("Tema:", ["plotly", "plotly_dark", "ggplot2", "seaborn", "simple_white"])
-        titulo = st.text_input("Título:", f"{tipo} de {y} por {x}")
+        tema = st.selectbox("Tema:", ["plotly", "plotly_dark", "ggplot2", "seaborn"])
         
     with c_plot:
         try:
-            if tipo == "Scatter": fig = px.scatter(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
-            elif tipo == "Barra": fig = px.bar(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
-            elif tipo == "Linha": fig = px.line(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
-            elif tipo == "Hist": fig = px.histogram(df_work, x=x, color=cor, template=tema, title=titulo)
-            elif tipo == "Box": fig = px.box(df_work, x=x, y=y, color=cor, template=tema, title=titulo)
-            elif tipo == "3D Scatter": 
+            if tipo == "Scatter": fig = px.scatter(df_work, x=x, y=y, color=cor, template=tema)
+            elif tipo == "Barra": fig = px.bar(df_work, x=x, y=y, color=cor, template=tema)
+            elif tipo == "Linha": fig = px.line(df_work, x=x, y=y, color=cor, template=tema)
+            elif tipo == "Hist": fig = px.histogram(df_work, x=x, color=cor, template=tema)
+            elif tipo == "Box": fig = px.box(df_work, x=x, y=y, color=cor, template=tema)
+            elif tipo == "3D": 
                 if pd.api.types.is_numeric_dtype(df_work[cor]):
-                     fig = px.scatter_3d(df_work, x=x, y=y, z=cor, color=cor, template=tema, title=titulo)
+                    fig = px.scatter_3d(df_work, x=x, y=y, z=cor, color=cor, template=tema)
                 else:
-                     st.warning("Para 3D, a Cor (Z) deve ser numérica.")
-                     fig = px.scatter(df_work, x=x, y=y, title="Fallback 2D")
-            
+                    st.warning("Para 3D, use cor numérica.")
+                    fig = px.scatter(df_work, x=x, y=y)
             st.plotly_chart(fig, use_container_width=True)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro gráfico: {e}")
