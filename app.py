@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import seaborn as sns
-import matplotlib.pyplot as plt
 import numpy as np
 import pickle
 import base64
@@ -17,83 +14,22 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 # --- CONFIGURAÇÃO GERAL ---
 st.set_page_config(
-    page_title="Data Studio Enterprise", 
+    page_title="Data Studio Universal", 
     layout="wide", 
-    page_icon="🚀",
+    page_icon="🛠️",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS DE ALTO CONTRASTE (CORREÇÃO DE CORES) ---
+# --- CSS MINIMALISTA (Apenas ajustes estruturais, sem forçar cores) ---
 st.markdown("""
 <style>
-    /* Fonte Global */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    
-    /* 1. Fundo e Cor Base */
-    .stApp {
-        background-color: #0E1117; /* Preto Fundo */
-        color: #FAFAFA; /* Branco Quase Puro */
+    .main {
+        padding-top: 2rem;
     }
-    
-    /* 2. Forçar Texto Branco em Parágrafos e Listas (A CORREÇÃO PRINCIPAL) */
-    div[data-testid="stMarkdownContainer"] p, 
-    div[data-testid="stMarkdownContainer"] li, 
-    div[data-testid="stMarkdownContainer"] span,
-    div[data-testid="stMarkdownContainer"] h1,
-    div[data-testid="stMarkdownContainer"] h2,
-    div[data-testid="stMarkdownContainer"] h3 {
-        color: #FAFAFA !important;
-    }
-
-    /* 3. Sidebar mais escura para contraste */
-    section[data-testid="stSidebar"] {
-        background-color: #050505;
-        border-right: 1px solid #333;
-    }
-    
-    /* 4. Métricas (Cards) */
     div[data-testid="stMetric"] {
-        background-color: #1E1E1E;
-        border: 1px solid #404040;
-        padding: 15px;
+        background-color: rgba(128, 128, 128, 0.1); /* Fundo sutil adaptável */
         border-radius: 8px;
-    }
-    div[data-testid="stMetricLabel"] { color: #CCCCCC !important; }
-    div[data-testid="stMetricValue"] { color: #FFFFFF !important; }
-    
-    /* 5. Inputs (Selectbox, Text) - Fundo escuro e texto claro */
-    div[data-baseweb="select"] > div {
-        background-color: #1E1E1E !important;
-        color: white !important;
-        border-color: #444 !important;
-    }
-    div[data-baseweb="base-input"] {
-        background-color: #1E1E1E !important;
-        border-color: #444 !important;
-    }
-    input {
-        color: white !important;
-    }
-    
-    /* 6. Botões */
-    div.stButton > button {
-        background-color: #4F8BF9;
-        color: white;
-        font-weight: bold;
-        border: none;
-    }
-    
-    /* 7. Área de Upload */
-    div[data-testid="stFileUploader"] {
-        background-color: #161920;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px dashed #4F8BF9;
-    }
-    
-    /* 8. Tabelas */
-    div[data-testid="stDataFrame"] {
-        border: 1px solid #333;
+        padding: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -107,263 +43,363 @@ def load_data(file):
         else:
             return pd.read_excel(file)
     except Exception as e:
+        st.error(f"Erro ao ler arquivo: {e}")
         return None
 
 def download_model(model):
     output_model = pickle.dumps(model)
     b64 = base64.b64encode(output_model).decode()
-    href = f'<a href="data:file/output_model;base64,{b64}" download="model_trained.pkl" style="text-decoration:none; background-color:#2E7d32; color:white; padding:10px 20px; border-radius:5px; font-weight:bold;">📥 Baixar Modelo Treinado (.pkl)</a>'
+    href = f'<a href="data:file/output_model;base64,{b64}" download="model_trained.pkl">📥 Baixar Modelo Treinado (.pkl)</a>'
     st.markdown(href, unsafe_allow_html=True)
 
-# --- SIDEBAR DE NAVEGAÇÃO ---
+def download_csv(df):
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Baixar CSV Atualizado",
+        data=csv,
+        file_name="dados_processados.csv",
+        mime="text/csv"
+    )
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.title("🚀 Data Studio")
-    st.caption("v3.2 Enterprise High Contrast")
+    st.title("🛠️ Data Studio")
+    st.caption("v4.0 Universal Workstation")
     st.markdown("---")
     
     uploaded_file = st.file_uploader("Carregar Dataset", type=["csv", "xlsx"])
     
     if uploaded_file:
+        # Inicialização do Estado
         if 'df_raw' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
             df = load_data(uploaded_file)
-            st.session_state['df_raw'] = df
-            st.session_state['df_work'] = df.copy()
-            st.session_state['file_name'] = uploaded_file.name
-            st.toast("Arquivo carregado!", icon="✅")
+            if df is not None:
+                st.session_state['df_raw'] = df
+                st.session_state['df_work'] = df.copy()
+                st.session_state['file_name'] = uploaded_file.name
+                st.toast("Dados carregados com sucesso!", icon="✅")
         
-        df_work = st.session_state['df_work']
-        st.success(f"Registros: {df_work.shape[0]} | Colunas: {df_work.shape[1]}")
-        
-        if st.button("🔄 Restaurar Original"):
-            st.session_state['df_work'] = st.session_state['df_raw'].copy()
-            st.rerun()
+        if 'df_work' in st.session_state:
+            df_work = st.session_state['df_work']
+            st.info(f"Linhas: {df_work.shape[0]} | Colunas: {df_work.shape[1]}")
             
-        st.markdown("---")
-        menu = st.radio("Módulos:", ["🏠 Dashboard", "🔬 Explorador", "🛠️ Engenharia", "🤖 AutoML", "📊 Visualizador"], index=0)
+            if st.button("🔄 Restaurar Dados Originais"):
+                st.session_state['df_work'] = st.session_state['df_raw'].copy()
+                st.rerun()
+            
+            st.markdown("---")
+            menu = st.radio("Módulos:", 
+                ["🏠 Dashboard", "🔬 Explorador", "🛠️ Engenharia de Dados", "🤖 AutoML", "📊 Visualizador"],
+                index=2 # Começa na engenharia para facilitar testes
+            )
     else:
         menu = "Home"
 
 # --- HOME ---
 if not uploaded_file:
-    st.title("Bem-vindo ao Data Studio Enterprise")
+    st.title("Data Studio Universal")
     st.markdown("""
-    ### 🧠 Central de Inteligência de Dados
+    ### A ferramenta definitiva para seus projetos de dados.
     
-    Esta ferramenta cobre todo o ciclo de vida da ciência de dados. O texto agora está otimizado para leitura em modo escuro.
+    Esta versão foca em **flexibilidade total**. Não assumimos nada sobre seus dados; você controla as transformações.
     
-    1. **Ingestão:** Suporte nativo a CSV e Excel.
-    2. **Exploração:** Dashboards automáticos.
-    3. **Preparação:** Limpeza e transformação (One-Hot, Normalização).
-    4. **Modelagem:** AutoML com Random Forest e Gradient Boosting.
-    5. **Simulação:** Teste o modelo em tempo real.
+    **Novidades da v4.0:**
+    * 🎨 **Tema Nativo:** Visual limpo que respeita suas configurações de sistema.
+    * 🎛️ **Mapeamento Manual:** Decida exatamente qual valor vira 0, 1, 2...
+    * 📝 **Edição Total:** Renomeie colunas e mude tipos de dados.
+    * ⚙️ **Hiperparâmetros:** Controle fino sobre os modelos de IA.
     
-    👈 **Para começar, carregue um arquivo na barra lateral.**
+    👈 **Carregue um arquivo para começar.**
     """)
     st.stop()
 
 # --- MÓDULO 1: DASHBOARD ---
 if menu == "🏠 Dashboard":
-    st.header("Visão Geral Executiva")
+    st.header("Visão Geral")
     
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Linhas", f"{df_work.shape[0]:,}")
-    c2.metric("Colunas", df_work.shape[1])
-    c3.metric("Nulos", df_work.isna().sum().sum())
-    c4.metric("Memória", f"{df_work.memory_usage(deep=True).sum()/1024**2:.2f} MB")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Registros", f"{df_work.shape[0]:,}")
+    c2.metric("Total Colunas", df_work.shape[1])
+    c3.metric("Células Vazias", df_work.isna().sum().sum())
     
-    st.markdown("---")
+    st.markdown("### Pré-visualização e Edição Rápida")
+    st.markdown("Você pode editar valores diretamente nesta tabela (experimental).")
+    edited_df = st.data_editor(df_work.head(1000), num_rows="dynamic")
     
-    col_L, col_R = st.columns([2, 1])
-    with col_L:
-        st.subheader("Visualização da Tabela")
-        st.dataframe(df_work.head(100), use_container_width=True, height=400)
-    
-    with col_R:
-        st.subheader("Tipos de Dados")
-        dtypes = df_work.dtypes.value_counts().reset_index()
-        dtypes.columns = ['Tipo', 'Qtd']
-        dtypes['Tipo'] = dtypes['Tipo'].astype(str)
-        
-        # Template Dark automático
-        fig = px.pie(dtypes, names='Tipo', values='Qtd', hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)") 
-        st.plotly_chart(fig, use_container_width=True)
+    # Se quiser salvar edições manuais da grade
+    if st.button("Salvar Edições Manuais da Tabela acima"):
+        # Nota: data_editor retorna apenas o que é mostrado, cuidado com datasets gigantes
+        st.warning("A edição direta é limitada às primeiras 1000 linhas por performance. Use a aba 'Engenharia' para mudanças em massa.")
 
 # --- MÓDULO 2: EXPLORADOR ---
 elif menu == "🔬 Explorador":
     st.header("Análise Exploratória")
     
-    tabs = st.tabs(["📊 Distribuição", "🔥 Correlação"])
+    t1, t2 = st.tabs(["Distribuições", "Correlações"])
     
-    with tabs[0]:
-        col_sel = st.selectbox("Variável:", df_work.columns)
-        if pd.api.types.is_numeric_dtype(df_work[col_sel]):
-            fig = px.histogram(df_work, x=col_sel, marginal="box", template="plotly_dark", color_discrete_sequence=['#4F8BF9'])
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            top = df_work[col_sel].value_counts().head(20).reset_index()
-            fig = px.bar(top, x='index', y=col_sel, template="plotly_dark", labels={'index': col_sel, col_sel: 'Contagem'})
-            st.plotly_chart(fig, use_container_width=True)
+    with t1:
+        col_sel = st.selectbox("Selecione Coluna:", df_work.columns)
+        c1, c2 = st.columns([2, 1])
+        
+        with c1:
+            if pd.api.types.is_numeric_dtype(df_work[col_sel]):
+                fig = px.histogram(df_work, x=col_sel, marginal="box", title=f"Histograma: {col_sel}")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                fig = px.bar(df_work[col_sel].value_counts().head(20), title=f"Contagem: {col_sel}")
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with c2:
+            st.write("Estatísticas:")
+            st.write(df_work[col_sel].describe())
 
-    with tabs[1]:
+    with t2:
         df_num = df_work.select_dtypes(include='number')
         if len(df_num.columns) > 1:
-            corr = df_num.corr()
-            fig = px.imshow(corr, text_auto='.2f', aspect="auto", template="plotly_dark", color_continuous_scale='Viridis')
-            st.plotly_chart(fig, use_container_width=True, height=600)
+            fig = px.imshow(df_num.corr(), text_auto=".2f", aspect="auto", color_continuous_scale="RdBu_r")
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("Precisa de colunas numéricas para correlação.")
+            st.warning("Colunas numéricas insuficientes.")
 
-# --- MÓDULO 3: ENGENHARIA ---
-elif menu == "🛠️ Engenharia":
-    st.header("Preparação de Dados")
+# --- MÓDULO 3: ENGENHARIA DE DADOS (O CORAÇÃO DA FERRAMENTA) ---
+elif menu == "🛠️ Engenharia de Dados":
+    st.header("Engenharia de Atributos (Feature Engineering)")
+    st.markdown("Transforme seus dados com precisão cirúrgica.")
     
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.subheader("Ferramentas")
-        acao = st.selectbox("Ação:", ["Tratar Nulos", "Remover Colunas", "One-Hot Encoding", "Normalizar"])
-        
-        if acao == "Tratar Nulos":
-            cols = df_work.columns[df_work.isna().any()].tolist()
-            if cols:
-                c_target = st.selectbox("Coluna:", cols)
-                metodo = st.radio("Preencher com:", ["Zero", "Média", "Moda"])
-                if st.button("Aplicar"):
-                    if metodo=="Zero": df_work[c_target].fillna(0, inplace=True)
-                    elif metodo=="Média" and pd.api.types.is_numeric_dtype(df_work[c_target]): 
-                        df_work[c_target].fillna(df_work[c_target].mean(), inplace=True)
-                    else: df_work[c_target].fillna(df_work[c_target].mode()[0], inplace=True)
-                    st.session_state['df_work'] = df_work
-                    st.rerun()
-            else:
-                st.info("Sem nulos.")
+    tab_clean, tab_transform, tab_map = st.tabs(["Limpeza & Tipos", "Transformação Auto", "Mapeamento Manual (Custom)"])
+    
+    # ABA 1: LIMPEZA BÁSICA
+    with tab_clean:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("1. Renomear Colunas")
+            col_rename = st.selectbox("Coluna para renomear:", df_work.columns)
+            new_name = st.text_input("Novo nome:", value=col_rename)
+            if st.button("Renomear"):
+                df_work.rename(columns={col_rename: new_name}, inplace=True)
+                st.session_state['df_work'] = df_work
+                st.rerun()
 
-        elif acao == "Remover Colunas":
-            cols_drop = st.multiselect("Escolha:", df_work.columns)
-            if st.button("Excluir") and cols_drop:
+            st.subheader("2. Excluir Colunas")
+            cols_drop = st.multiselect("Selecionar para deletar:", df_work.columns)
+            if st.button("Deletar Colunas"):
                 df_work.drop(columns=cols_drop, inplace=True)
                 st.session_state['df_work'] = df_work
                 st.rerun()
         
-        elif acao == "One-Hot Encoding":
-            cols_cat = df_work.select_dtypes(include=['object']).columns
-            c_target = st.selectbox("Coluna Categórica:", cols_cat)
-            if st.button("Converter") and c_target:
-                # CORREÇÃO IMPORTANTE: dtype=int para gerar 0 e 1
-                df_work = pd.get_dummies(df_work, columns=[c_target], drop_first=True, dtype=int)
-                st.session_state['df_work'] = df_work
-                st.success("Convertido!")
-                st.rerun()
+        with c2:
+            st.subheader("3. Converter Tipos")
+            col_convert = st.selectbox("Coluna para converter:", df_work.columns)
+            type_target = st.selectbox("Para qual tipo?", ["Numérico (Float)", "Texto (String)", "Data (DateTime)"])
+            if st.button("Converter Tipo"):
+                try:
+                    if "Numérico" in type_target:
+                        df_work[col_convert] = pd.to_numeric(df_work[col_convert], errors='coerce')
+                    elif "Texto" in type_target:
+                        df_work[col_convert] = df_work[col_convert].astype(str)
+                    elif "Data" in type_target:
+                        df_work[col_convert] = pd.to_datetime(df_work[col_convert], errors='coerce')
+                    st.session_state['df_work'] = df_work
+                    st.success("Convertido!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
 
-        elif acao == "Normalizar":
-            cols_num = st.multiselect("Colunas:", df_work.select_dtypes(include='number').columns)
-            if st.button("Normalizar") and cols_num:
-                scaler = StandardScaler()
-                df_work[cols_num] = scaler.fit_transform(df_work[cols_num])
-                st.session_state['df_work'] = df_work
-                st.rerun()
+            st.subheader("4. Tratar Nulos")
+            col_null = st.selectbox("Coluna com Nulos:", df_work.columns[df_work.isna().any()].tolist()) if df_work.isna().any().any() else None
+            if col_null:
+                method = st.selectbox("Ação:", ["Preencher com 0", "Preencher com Média", "Preencher com Texto Personalizado", "Remover Linhas"])
+                custom_val = st.text_input("Valor (se personalizado):") if "Personalizado" in method else None
+                
+                if st.button("Aplicar Tratamento"):
+                    if "Remover" in method:
+                        df_work.dropna(subset=[col_null], inplace=True)
+                    elif "Média" in method:
+                         df_work[col_null].fillna(df_work[col_null].mean(), inplace=True)
+                    elif "0" in method:
+                         df_work[col_null].fillna(0, inplace=True)
+                    elif custom_val:
+                         df_work[col_null].fillna(custom_val, inplace=True)
+                    st.session_state['df_work'] = df_work
+                    st.rerun()
 
-    with c2:
-        st.subheader("Visualização")
-        st.dataframe(df_work.head(15), use_container_width=True)
+    # ABA 2: TRANSFORMAÇÃO AUTOMÁTICA
+    with tab_transform:
+        st.subheader("One-Hot Encoding (Automático)")
+        st.caption("Cria novas colunas para cada categoria (ex: Cor_Vermelho, Cor_Azul).")
+        col_onehot = st.selectbox("Coluna Categórica:", df_work.select_dtypes(include='object').columns)
+        if st.button("Gerar Dummies"):
+            df_work = pd.get_dummies(df_work, columns=[col_onehot], drop_first=True, dtype=int)
+            st.session_state['df_work'] = df_work
+            st.success("Colunas geradas!")
+            st.rerun()
+
+        st.divider()
+        st.subheader("Normalização (StandardScaler)")
+        col_norm = st.multiselect("Colunas Numéricas:", df_work.select_dtypes(include='number').columns)
+        if st.button("Normalizar Seleção"):
+            scaler = StandardScaler()
+            df_work[col_norm] = scaler.fit_transform(df_work[col_norm])
+            st.session_state['df_work'] = df_work
+            st.rerun()
+
+    # ABA 3: MAPEAMENTO MANUAL (NOVIDADE)
+    with tab_map:
+        st.subheader("Mapeamento de Valores (Label Encoding Customizado)")
+        st.caption("Defina manualmente qual número representa cada categoria (ex: Feminino=1, Masculino=0).")
+        
+        col_map = st.selectbox("Selecione a Coluna para Mapear:", df_work.columns, key="map_col")
+        
+        if col_map:
+            unique_vals = df_work[col_map].unique()
+            
+            # Limite de segurança para não travar a UI
+            if len(unique_vals) > 50:
+                st.error(f"Esta coluna tem {len(unique_vals)} valores únicos. Mapeamento manual é recomendado apenas para colunas com poucas categorias.")
+            else:
+                st.write("Defina os valores de destino:")
+                
+                # Dicionário para guardar o input do usuário
+                mapping_dict = {}
+                cols_ui = st.columns(2)
+                
+                # Loop para criar inputs dinâmicos
+                for i, val in enumerate(unique_vals):
+                    with cols_ui[i % 2]:
+                        # Tenta sugerir um número sequencial (0, 1, 2...)
+                        new_val = st.text_input(f"Valor para '{val}':", value=str(i), key=f"map_{col_map}_{i}")
+                        # Tenta converter para número se possível
+                        try:
+                            if '.' in new_val:
+                                mapping_dict[val] = float(new_val)
+                            else:
+                                mapping_dict[val] = int(new_val)
+                        except:
+                            mapping_dict[val] = new_val # Mantém string se não for número
+                
+                if st.button("Aplicar Mapeamento Manual"):
+                    df_work[col_map] = df_work[col_map].map(mapping_dict)
+                    st.session_state['df_work'] = df_work
+                    st.success(f"Mapeamento aplicado em {col_map}!")
+                    st.rerun()
+
+    # Exibição do DF Atual
+    st.divider()
+    st.markdown("#### Estado Atual dos Dados")
+    st.dataframe(df_work.head())
+    download_csv(df_work)
 
 # --- MÓDULO 4: AUTO ML ---
 elif menu == "🤖 AutoML":
-    st.header("Machine Learning Automático")
+    st.header("Machine Learning Lab")
     
-    c_left, c_right = st.columns([1, 2])
+    c_setup, c_params = st.columns([1, 1])
     
-    with c_left:
-        target = st.selectbox("Alvo (Previsão):", df_work.columns)
-        features = st.multiselect("Features (Variáveis):", [c for c in df_work.columns if c != target])
+    with c_setup:
+        st.subheader("1. Alvo e Features")
+        target = st.selectbox("O que vamos prever?", df_work.columns)
+        features = st.multiselect("Quais dados usar para prever?", [c for c in df_work.columns if c != target])
         
-        is_reg = pd.api.types.is_numeric_dtype(df_work[target]) and df_work[target].nunique() > 20
-        tipo = "Regressão" if is_reg else "Classificação"
-        st.caption(f"Modo: {tipo}")
+        # Detecção Automática
+        is_reg = pd.api.types.is_numeric_dtype(df_work[target]) and df_work[target].nunique() > 10
+        mode = "Regressão" if is_reg else "Classificação"
+        st.info(f"Modo Detectado: {mode}")
         
-        algoritmo = st.selectbox("Modelo:", ["Random Forest", "Gradient Boosting"])
-        btn_treinar = st.button("🚀 Iniciar Treino", type="primary")
-    
-    with c_right:
-        if btn_treinar and features:
-            with st.spinner("Treinando..."):
-                try:
+        model_arch = st.selectbox("Algoritmo:", ["Random Forest", "Gradient Boosting", "Linear/Logistic"])
+
+    with c_params:
+        st.subheader("2. Hiperparâmetros (Opcional)")
+        with st.expander("⚙️ Configuração Avançada"):
+            n_estimators = st.slider("Número de Árvores (n_estimators)", 10, 500, 100)
+            max_depth = st.slider("Profundidade Máxima (max_depth)", 1, 50, 10)
+            test_size = st.slider("Tamanho do Teste (%)", 10, 50, 20) / 100
+
+    if st.button("🚀 Treinar Modelo", type="primary"):
+        if not features:
+            st.error("Selecione as features!")
+        else:
+            try:
+                with st.spinner("Treinando..."):
                     X = df_work[features]
                     y = df_work[target]
                     
-                    # Validação rápida
+                    # Verificação de segurança
                     if X.select_dtypes(include=['object']).shape[1] > 0:
-                        st.error("Erro: Converta colunas de texto em números na aba Engenharia antes de treinar.")
+                        st.error("Ainda existem colunas de texto nas Features! Use a aba 'Engenharia' para mapear ou converter.")
                         st.stop()
 
-                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
                     
-                    if tipo == "Regressão":
-                        model = RandomForestRegressor() if algoritmo == "Random Forest" else GradientBoostingRegressor()
+                    # Seleção do Modelo e Params
+                    if mode == "Regressão":
+                        if model_arch == "Random Forest": 
+                            model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth)
+                        elif model_arch == "Gradient Boosting": 
+                            model = GradientBoostingRegressor(n_estimators=n_estimators, max_depth=max_depth)
+                        else: 
+                            model = LinearRegression()
                     else:
+                        # Label Encode no Target se for texto
                         if y.dtype == 'object':
                             le = LabelEncoder()
                             y = le.fit_transform(y)
-                            y_train, y_test = train_test_split(y, test_size=0.2)
-                        model = RandomForestClassifier() if algoritmo == "Random Forest" else GradientBoostingClassifier()
+                            y_train, y_test = train_test_split(y, test_size=test_size, random_state=42)
+                            
+                        if model_arch == "Random Forest": 
+                            model = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth)
+                        elif model_arch == "Gradient Boosting": 
+                            model = GradientBoostingClassifier(n_estimators=n_estimators, max_depth=max_depth)
+                        else: 
+                            model = LogisticRegression()
                     
                     model.fit(X_train, y_train)
                     preds = model.predict(X_test)
                     
-                    # Salva na sessão
-                    st.session_state['model'] = model
-                    st.session_state['features'] = features
+                    # Resultados
+                    st.success("Treinamento Concluído!")
                     
-                    # Métricas
-                    if tipo == "Regressão":
-                        r2 = r2_score(y_test, preds)
-                        st.metric("R² (Precisão)", f"{r2:.2%}")
-                        fig = px.scatter(x=y_test, y=preds, labels={'x':'Real', 'y':'Previsto'}, template="plotly_dark", title="Real vs Previsto")
-                        fig.add_shape(type="line", line=dict(dash="dash", color="white"), x0=y.min(), y0=y.max(), x1=y.min(), y1=y.max())
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        acc = accuracy_score(y_test, preds)
-                        st.metric("Acurácia", f"{acc:.2%}")
-                        cm = confusion_matrix(y_test, preds)
-                        fig = px.imshow(cm, text_auto=True, template="plotly_dark", title="Matriz de Confusão")
-                        st.plotly_chart(fig, use_container_width=True)
+                    res_col1, res_col2 = st.columns(2)
+                    if mode == "Regressão":
+                        res_col1.metric("R² Score", f"{r2_score(y_test, preds):.2%}")
+                        res_col2.metric("MAE Error", f"{mean_absolute_error(y_test, preds):.2f}")
                         
-                except Exception as e:
-                    st.error(f"Erro: {e}")
+                        fig = px.scatter(x=y_test, y=preds, labels={'x':'Real', 'y':'Previsto'}, title="Real vs Previsto")
+                        fig.add_shape(type="line", line=dict(dash="dash", color="red"), x0=y.min(), y0=y.max(), x1=y.min(), y1=y.max())
+                        st.plotly_chart(fig)
+                    else:
+                        res_col1.metric("Acurácia", f"{accuracy_score(y_test, preds):.2%}")
+                        cm = confusion_matrix(y_test, preds)
+                        fig = px.imshow(cm, text_auto=True, title="Matriz de Confusão")
+                        st.plotly_chart(fig)
+                    
+                    st.session_state['model'] = model
+                    download_model(model)
 
-    # Simulador
-    if 'model' in st.session_state:
-        st.markdown("---")
-        st.subheader("🔮 Simulador")
-        cols = st.columns(4)
-        inputs = {}
-        for i, col in enumerate(st.session_state['features']):
-            with cols[i%4]:
-                if pd.api.types.is_numeric_dtype(df_work[col]):
-                    val = float(df_work[col].mean())
-                    inputs[col] = st.number_input(col, value=val)
-                else:
-                    inputs[col] = st.selectbox(col, [0, 1])
-        
-        if st.button("Prever Resultado"):
-            res = st.session_state['model'].predict(pd.DataFrame([inputs]))[0]
-            st.success(f"Previsão: {res:.2f}")
-            download_model(st.session_state['model'])
+            except Exception as e:
+                st.error(f"Erro no treinamento: {e}")
 
 # --- MÓDULO 5: VISUALIZADOR ---
 elif menu == "📊 Visualizador":
-    st.header("Gráficos Personalizados")
-    c1, c2, c3 = st.columns(3)
-    tipo = c1.selectbox("Tipo:", ["Scatter", "Barra", "Linha", "Boxplot"])
-    x = c2.selectbox("Eixo X:", df_work.columns)
-    y = c3.selectbox("Eixo Y:", df_work.columns)
-    cor = st.selectbox("Cor (Legenda):", [None] + list(df_work.columns))
+    st.header("Gráficos Flexíveis")
     
-    if st.button("Gerar Gráfico"):
-        if tipo == "Scatter": fig = px.scatter(df_work, x=x, y=y, color=cor, template="plotly_dark")
-        elif tipo == "Barra": fig = px.bar(df_work, x=x, y=y, color=cor, template="plotly_dark")
-        elif tipo == "Linha": fig = px.line(df_work, x=x, y=y, color=cor, template="plotly_dark")
-        elif tipo == "Boxplot": fig = px.box(df_work, x=x, y=y, color=cor, template="plotly_dark")
+    col_control, col_graph = st.columns([1, 3])
+    
+    with col_control:
+        type_graph = st.selectbox("Tipo:", ["Scatter", "Bar", "Line", "Histogram", "Box", "Violin"])
+        x = st.selectbox("X:", df_work.columns)
+        y = st.selectbox("Y:", df_work.columns, index=1)
+        color = st.selectbox("Cor:", [None] + list(df_work.columns))
+        title = st.text_input("Título do Gráfico:", f"{type_graph} of {y} by {x}")
         
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig, use_container_width=True)
+    with col_graph:
+        try:
+            if type_graph == "Scatter": fig = px.scatter(df_work, x=x, y=y, color=color, title=title)
+            elif type_graph == "Bar": fig = px.bar(df_work, x=x, y=y, color=color, title=title)
+            elif type_graph == "Line": fig = px.line(df_work, x=x, y=y, color=color, title=title)
+            elif type_graph == "Histogram": fig = px.histogram(df_work, x=x, color=color, title=title)
+            elif type_graph == "Box": fig = px.box(df_work, x=x, y=y, color=color, title=title)
+            elif type_graph == "Violin": fig = px.violin(df_work, x=x, y=y, color=color, title=title)
+            
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.warning("Selecione colunas compatíveis com o tipo de gráfico.")
