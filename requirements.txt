@@ -8,3 +8,5 @@ pyarrow==21.0.0
 joblib
 duckdb==1.0.0
 kaleido
+scikit-learn
+scipy
