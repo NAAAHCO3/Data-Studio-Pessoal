@@ -6,4 +6,5 @@ fpdf2==2.8.5
 openpyxl
 pyarrow==21.0.0
 joblib
-duckdb==1.0.0      # ❗️ SOMENTE SE você quiser consultas SQL ou lidar com datasets grandes
+duckdb==1.0.0
+kaleido
