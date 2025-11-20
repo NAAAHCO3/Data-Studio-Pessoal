@@ -10,3 +10,4 @@ openpyxl
 joblib
 watchdog==6.0.0
 pyarrow==21.0.0
+matplotlib
