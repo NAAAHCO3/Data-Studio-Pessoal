@@ -3,12 +3,7 @@ pandas==2.3.3
 numpy==2.3.4
 plotly==6.4.0
 fpdf2==2.8.5
-scikit-learn
-statsmodels
-scipy
 openpyxl
-joblib
-watchdog==6.0.0
 pyarrow==21.0.0
-matplotlib
-duckdb
+joblib
+duckdb==1.0.0      # ❗️ SOMENTE SE você quiser consultas SQL ou lidar com datasets grandes
