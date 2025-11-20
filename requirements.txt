@@ -13,3 +13,5 @@ pyarrow==21.0.0
 matplotlib
 duckdb
 kaleido
+xgboost
+pyyaml
