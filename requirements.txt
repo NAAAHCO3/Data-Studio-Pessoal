@@ -2,10 +2,6 @@ streamlit
 pandas
 numpy
 plotly
-fpdf2
 openpyxl
+xlsxwriter
 pyarrow
-joblib
-duckdb
-scikit-learn
-scipy
