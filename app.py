@@ -376,8 +376,17 @@ def simple_automl_train(df: pd.DataFrame, target: str, features: List[str], is_r
     if num_cols:
         transformers.append(('num', Pipeline([('impute', SimpleImputer(strategy='median')), ('scale', StandardScaler())]), num_cols))
     if cat_cols:
-        transformers.append(('cat', Pipeline([('impute', SimpleImputer(strategy='most_frequent')), ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False)])), cat_cols)
-    preproc = ColumnTransformer(transformers=transformers, remainder='drop', sparse_threshold=0)
+       transformers.append(
+    (
+        'cat',
+        Pipeline([
+            ('impute', SimpleImputer(strategy='most_frequent')),
+            ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ]),
+        cat_cols
+    )
+)
+
     # Feature selection
     fs_steps = []
     if use_fs:
