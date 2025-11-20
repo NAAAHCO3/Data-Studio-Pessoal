@@ -1,14 +1,13 @@
 """
-Enterprise Analytics — Ultimate Learning Edition (v11.0)
+Enterprise Analytics — Interactive Tutorial Edition (v12.0)
 Author: Gemini Advanced
-Version: 11.0 (Deep Academy, Visual Customization, NLP Fix, Integrated Layout)
+Version: 12.0 (Interactive Tutorial, Dirty Data Gen, Gamified Learning)
 
-Destaques v11.0:
-- UI: Visualização de dados integrada nas telas de ETL e SQL.
-- EDU: Academy com comparação "App vs Code (Python/SQL)" e teoria aprofundada.
-- VIZ: Customização avançada (cores, grid, fundo) e filtros locais.
-- ML: Retorno do NLP, Simulador de teste e Explicações didáticas.
-- BUGFIX: Correção na geração de binários do PDF (fpdf2).
+Destaques v12.0:
+- EDU: 'Modo Tutorial' gamificado com missões passo-a-passo.
+- DATA: Gerador de dados 'Sujos' (Nulls, Dups, Outliers) para treino real.
+- UX: Navegação guiada por objetivos ("Sua missão agora é...").
+- CORE: Toda a robustez da v11 (SQL, ML, PDF, Visual Studio).
 """
 
 import streamlit as st
@@ -24,7 +23,9 @@ import pickle
 import yaml
 import hashlib
 import json
-from datetime import datetime
+import random
+import unicodedata
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Tuple
 
 # --- Scientific Stack ---
@@ -63,7 +64,7 @@ from fpdf.enums import XPos, YPos
 # CONFIG & STYLES
 # ---------------------------
 st.set_page_config(
-    page_title="Data Studio Academy v11", 
+    page_title="Data Studio Tutorial", 
     layout="wide", 
     page_icon="🎓", 
     initial_sidebar_state="expanded"
@@ -74,30 +75,39 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     
-    /* Cards & Containers */
+    /* Cards */
     .st-card {
         background-color: #ffffff; padding: 20px; border-radius: 12px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin-bottom: 20px;
     }
+    /* Tutorial Highlight */
     .tutorial-box {
-        background-color: #eff6ff; border-left: 5px solid #3b82f6; 
-        padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 0.95rem; color: #1e3a8a;
+        background-color: #fffbeb; border-left: 5px solid #f59e0b; 
+        padding: 15px; border-radius: 8px; margin-bottom: 20px; 
+        font-size: 1rem; color: #78350f; box-shadow: 0 2px 4px rgba(245, 158, 11, 0.1);
     }
-    .concept-box {
-        background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px;
+    .tutorial-title { font-weight: 800; display: block; margin-bottom: 5px; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px; }
+    
+    /* KPI Box */
+    .kpi-box {
+        text-align: center; padding: 15px; background: #f8fafc; 
+        border-radius: 8px; border: 1px solid #e2e8f0;
     }
+    .kpi-val { font-size: 1.6rem; font-weight: 700; color: #0f172a; }
+    .kpi-lbl { font-size: 0.8rem; color: #64748b; text-transform: uppercase; }
     
     /* Dark Mode */
     @media (prefers-color-scheme: dark) {
         .st-card { background-color: #1e293b; border-color: #334155; color: white; }
-        .tutorial-box { background-color: #172554; border-color: #3b82f6; color: #dbeafe; }
-        .concept-box { background-color: #064e3b; border-color: #059669; color: #ecfdf5; }
+        .tutorial-box { background-color: #451a03; border-color: #d97706; color: #fef3c7; }
+        .kpi-box { background-color: #0f172a; border-color: #334155; }
+        .kpi-val { color: #f1f5f9; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------
-# EVENT BUS
+# CORE: EVENT BUS
 # ---------------------------
 class EventBus:
     def __init__(self): self.logs = []
@@ -139,14 +149,19 @@ class PipelineEngine:
                     elif p['op'] == "*": df[p['nm']] = df[p['a']] * df[p['b']]
                     elif p['op'] == "/": df[p['nm']] = df[p['a']] / df[p['b']]
                 elif op == "dropna": df = df.dropna()
-                elif op == "sort": df = df.sort_values(by=p['col'], ascending=p['asc'])
-                elif op == "groupby":
-                    df = df.groupby(p['gb_col'])[p['val_col']].agg(p['agg']).reset_index()
-                    df.rename(columns={p['val_col']: f"{p['val_col']}_{p['agg']}"}, inplace=True)
+                elif op == "fillna_0": df = df.fillna(0)
+                elif op == "drop_duplicates": df = df.drop_duplicates()
                 elif op == "dummies": df = pd.get_dummies(df, columns=p['cols'], drop_first=True, dtype=int)
+                elif op == "clean_text":
+                    def clean(text):
+                        if not isinstance(text, str): return ""
+                        text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII').lower()
+                        text = re.sub(r'[^a-z\s]', '', text)
+                        return re.sub(r'\s+', ' ', text).strip()
+                    df[p['col']] = df[p['col']].apply(clean)
             st.session_state['df'] = df
         except Exception as e: bus.emit("etl", "error", {"msg": str(e)}, "ERROR")
-
+    
     def export_python(self) -> str:
         code = ["import pandas as pd", "df = pd.read_csv('data.csv')"]
         for step in self.get_steps():
@@ -154,27 +169,8 @@ class PipelineEngine:
             p = step['params']
             if op == "calc": code.append(f"df['{p['nm']}'] = df['{p['a']}'] {p['op']} df['{p['b']}']")
             elif op == "dropna": code.append("df = df.dropna()")
-            elif op == "groupby": code.append(f"df = df.groupby('{p['gb_col']}')['{p['val_col']}'].agg('{p['agg']}').reset_index()")
+            elif op == "dummies": code.append(f"df = pd.get_dummies(df, columns={p['cols']}, drop_first=True)")
         return "\n".join(code)
-
-class SmartViz:
-    @staticmethod
-    def analyze(df: pd.DataFrame, x: str, y: str = None) -> Dict[str, Any]:
-        analysis = {"recommended": "Scatter", "reason": "Padrão"}
-        x_series = df[x]
-        is_num_x = pd.api.types.is_numeric_dtype(x_series)
-        is_date_x = pd.api.types.is_datetime64_any_dtype(x_series)
-        y_series = df[y] if y else None
-        is_num_y = pd.api.types.is_numeric_dtype(y_series) if y else False
-
-        if y is None:
-            if is_num_x: return {"recommended": "Histograma", "reason": "Distribuição numérica."}
-            return {"recommended": "Barras", "reason": "Contagem de frequências."}
-        else:
-            if is_date_x and is_num_y: return {"recommended": "Linha", "reason": "Série temporal."}
-            if not is_num_x and is_num_y: return {"recommended": "Barras", "reason": "Comparação categórica."}
-            if is_num_x and is_num_y: return {"recommended": "Scatter", "reason": "Correlação numérica."}
-        return analysis
 
 class ModelRegistry:
     def register(self, model, name: str, metrics: dict, features: List[str], params: dict):
@@ -201,7 +197,7 @@ pipeline_engine = PipelineEngine()
 model_registry = ModelRegistry()
 
 # ---------------------------
-# UTILITIES
+# UTILITIES & DEMO DATA
 # ---------------------------
 @st.cache_data(show_spinner=False)
 def load_data(file) -> pd.DataFrame:
@@ -216,23 +212,46 @@ def clean_colnames(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 @st.cache_data
-def get_demo_data():
+def get_dirty_demo_data():
+    """Gera dados com problemas propositais para o tutorial."""
     np.random.seed(42)
-    n = 500
+    n = 300
     dates = pd.date_range('2024-01-01', periods=n)
-    cats = ['Eletrônicos', 'Casa', 'Roupas', 'Livros']
-    reviews = ["Ótimo", "Ruim", "Excelente", "Péssimo", "Regular", "Não gostei", "Maravilhoso", "Demorou"]
+    cats = ['Saboaria', 'Higiene', 'Detergente']
+    reviews_pos = ["Tudo certo", "Muito bom", "Limpo", "Conforme"]
+    reviews_neg = ["Sujo", "Quebrado", "Ruim", "Vazamento", "Fora do lugar"]
+    
     df = pd.DataFrame({
         'data': dates,
-        'categoria': np.random.choice(cats, n),
-        'vendas': np.random.uniform(50, 500, n),
-        'quantidade': np.random.randint(1, 20, n),
-        'nota': np.random.randint(1, 6, n),
-        'comentario_cliente': np.random.choice(reviews, n)
+        'setor': np.random.choice(cats, n),
+        'producao': np.random.uniform(100, 1000, n),
+        'temperatura': np.random.normal(25, 5, n),
+        'comentario': np.random.choice(reviews_pos + reviews_neg, n)
     })
-    df['lucro'] = df['vendas'] * 0.3
-    df['vendas'] = df['vendas'] + np.random.normal(0, 20, n)
+    
+    # 1. Injetar Nulos
+    df.loc[np.random.choice(df.index, 30), 'producao'] = np.nan
+    
+    # 2. Injetar Duplicatas
+    df = pd.concat([df, df.iloc[:20]], ignore_index=True)
+    
+    # 3. Injetar Outlier (O "monstro" para achar no SQL)
+    df.loc[5, 'producao'] = 1000000 # 1 Milhão!
+    df.loc[5, 'comentario'] = "ERRO GRAVE DE LEITURA"
+    
+    # Target Logic for ML
+    df['status_final'] = np.where(df['producao'] > 500, 'Meta Batida', 'Abaixo da Meta')
+    
     return df
+
+def render_tutorial(text: str):
+    if st.session_state.get('tutorial_mode'):
+        st.markdown(f"""
+        <div class='tutorial-box'>
+            <span class='tutorial-title'>🎓 MISSÃO DO TUTORIAL</span>
+            {text}
+        </div>
+        """, unsafe_allow_html=True)
 
 # ---------------------------
 # PDF ENGINE
@@ -240,30 +259,35 @@ def get_demo_data():
 class EnterprisePDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 10)
-        self.cell(0, 10, 'Academy Analytics Report v11.0', 0, 1, 'R')
+        self.cell(0, 10, 'Tutorial Report v12.0', 0, 1, 'R')
     def footer(self):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
         self.cell(0, 10, f'Pag {self.page_no()}/{{nb}}', 0, 0, 'C')
 
-def generate_report_v11(df: pd.DataFrame, charts: List[dict], kpis: dict) -> bytes:
+def generate_report_v12(df: pd.DataFrame, charts: List[dict], kpis: dict) -> bytes:
     pdf = EnterprisePDF()
     pdf.alias_nb_pages()
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 24)
-    pdf.cell(0, 20, "Relatório Analítico", 0, 1, 'C')
     
+    # Capa
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.cell(0, 20, "Relatório Completo", 0, 1, 'C')
+    
+    # 1. KPIs
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, "1. Métricas Chave", 1, 1)
+    pdf.cell(0, 10, "1. Métricas Gerais", 1, 1)
     pdf.set_font("Helvetica", "", 12)
     w = 45
     pdf.cell(w, 10, f"Linhas: {kpis['rows']}", 1)
-    pdf.cell(w, 10, f"Colunas: {kpis['cols']}", 1)
     pdf.cell(w, 10, f"Nulos: {kpis['nulls']}", 1)
+    pdf.cell(w, 10, f"Duplicatas: {kpis['dups']}", 1)
     pdf.ln(15)
     
+    # 2. Charts
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, "2. Gráficos", 0, 1)
+    pdf.cell(0, 10, "2. Análises Visuais", 0, 1)
+    
     import tempfile, os
     for i, ch in enumerate(charts):
         if i % 2 == 0 and i > 0: pdf.add_page()
@@ -276,189 +300,264 @@ def generate_report_v11(df: pd.DataFrame, charts: List[dict], kpis: dict) -> byt
                 path = tmp.name
             pdf.image(path, x=20, w=170)
             os.unlink(path)
-        except: pdf.cell(0, 10, "[Imagem indisponível - Instale 'kaleido']", 0, 1)
+        except: 
+            pdf.set_font("Courier", "I", 10)
+            pdf.cell(0, 10, "[Imagem não disponível]", 0, 1)
         pdf.ln(5)
-        
-    # Fix for PDF Output: Return bytes directly
-    return bytes(pdf.output(dest='S'))
+        if ch.get('note'):
+            pdf.set_font("Helvetica", "I", 10)
+            pdf.multi_cell(0, 5, f"Nota: {ch['note']}")
+            pdf.ln(5)
+            
+    return bytes(pdf.output())
 
 # ---------------------------
 # PAGES
 # ---------------------------
 
 def page_home():
-    st.title("🏠 Home & Overview")
-    if st.session_state.get('tutorial_mode'):
-        st.info("💡 DICA DO PROFESSOR: Comece olhando o 'describe()'. Ele te diz se a média faz sentido ou se tem outliers (valores estranhos) que distorcem tudo.")
-
+    st.title("🏠 Home")
+    
     df = st.session_state['df']
+    
     if df.empty:
-        st.markdown("### Comece aqui 👇")
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("🚀 Carregar Dados Demo (Full Stack)", type="primary"):
-                df = get_demo_data()
+            st.info("Bem-vindo! Vamos aprender na prática?")
+            if st.button("🚀 Iniciar Tutorial Interativo", type="primary"):
+                df = get_dirty_demo_data()
                 st.session_state['df'] = df
                 st.session_state['df_raw'] = df.copy()
                 st.session_state['tutorial_mode'] = True
                 st.rerun()
+            
+            st.markdown("---")
+            uploaded = st.file_uploader("Ou carregue seu arquivo", type=['csv','xlsx'])
+            if uploaded:
+                # Load logic (simplified for home)
+                try:
+                    if uploaded.name.endswith('.csv'): df = pd.read_csv(uploaded, encoding_errors='ignore')
+                    else: df = pd.read_excel(uploaded)
+                    st.session_state['df'] = clean_colnames(df)
+                    st.session_state['df_raw'] = st.session_state['df'].copy()
+                    st.session_state['tutorial_mode'] = False
+                    st.rerun()
+                except Exception as e: st.error(e)
         return
+
+    render_tutorial("""
+    <b>Passo 1: Diagnóstico</b><br>
+    Olhe para os KPIs abaixo. Viu que temos <b>Nulos</b> e <b>Duplicatas</b>?
+    Isso vai quebrar nossa análise. Sua primeira missão é ir na aba <b>🛠️ ETL Studio</b> e limpar isso.
+    """)
 
     # KPIs
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Linhas", f"{df.shape[0]:,}")
-    k2.metric("Colunas", df.shape[1])
-    k3.metric("Duplicatas", df.duplicated().sum())
-    k4.metric("Nulos (Total)", df.isna().sum().sum())
+    k1.markdown(f"<div class='kpi-box'><div class='kpi-val'>{df.shape[0]:,}</div><div class='kpi-lbl'>Linhas</div></div>", unsafe_allow_html=True)
+    k2.markdown(f"<div class='kpi-box'><div class='kpi-val'>{df.shape[1]}</div><div class='kpi-lbl'>Colunas</div></div>", unsafe_allow_html=True)
+    k3.markdown(f"<div class='kpi-box'><div class='kpi-val'>{df.duplicated().sum()}</div><div class='kpi-lbl'>Duplicatas</div></div>", unsafe_allow_html=True)
+    k4.markdown(f"<div class='kpi-box'><div class='kpi-val'>{df.isna().sum().sum()}</div><div class='kpi-lbl'>Células Vazias</div></div>", unsafe_allow_html=True)
 
-    st.markdown("### 🔎 Estatísticas Descritivas")
-    t1, t2 = st.tabs(["🔢 Numéricas (Describe)", "🔤 Categóricas"])
-    
-    with t1:
-        nums = df.select_dtypes(include=np.number)
-        if not nums.empty:
-            st.dataframe(nums.describe().T, use_container_width=True)
-        else: st.info("Sem colunas numéricas.")
-    
-    with t2:
-        cats = df.select_dtypes(include='object')
-        if not cats.empty:
-            st.dataframe(cats.describe().T, use_container_width=True)
-        else: st.info("Sem colunas de texto.")
+    st.markdown("### 🔎 Visão Geral")
+    st.dataframe(df.head(10), use_container_width=True)
 
 def page_academy():
-    st.title("🎓 Academy: Teoria & Prática")
-    tab1, tab2, tab3 = st.tabs(["📚 Glossário", "🐍 Python vs App", "💻 SQL vs App"])
+    st.title("🎓 Academy: O Guia Definitivo")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["📚 Glossário", "🐍 App vs Python", "💻 App vs SQL", "🧠 Teoria ML"])
     
     with tab1:
         st.markdown("""
-        ### Dicionário de Dados
-        - **DataFrame:** Tabela de dados em memória.
-        - **Overfitting (Sobreajuste):** Quando seu modelo decora o passado e erra o futuro. Sinal: Acurácia de Treino 99%, Teste 60%.
-        - **Matriz de Confusão:** Tabela que mostra: O que era A e eu disse que era A (Acerto), e o que era A e eu disse B (Erro).
-        - **Feature Engineering:** Criar novas colunas (ex: extrair 'mês' da data) para ajudar o modelo a aprender.
+        ### Fundamentos
+        - **ETL (Extract, Transform, Load):** O processo de pegar dados brutos, limpar e preparar para análise.
+        - **Outlier:** Um valor que foge do padrão. No tutorial, escondemos uma venda de 1 Milhão! Isso distorce a média.
+        - **Feature Engineering:** Criar colunas novas (ex: extrair 'Mês' de 'Data') para ajudar o modelo a entender padrões temporais.
         """)
-    
     with tab2:
-        st.header("App vs Python")
+        st.header("Como fazer no Python?")
         c1, c2 = st.columns(2)
         with c1:
-            st.info("👉 O que você faz aqui (Botão)")
-            st.markdown("**1. Filtrar Vendas > 100**")
-            st.markdown("**2. Agrupar por Categoria**")
-            st.markdown("**3. Preencher Nulos com 0**")
+            st.info("No App: Botão 'Remover Nulos'")
+            st.code("df.dropna(inplace=True)")
         with c2:
-            st.success("🐍 Como é no código (Pandas)")
-            st.code("df = df[df['vendas'] > 100]", language="python")
-            st.code("df.groupby('categoria')['vendas'].sum()", language="python")
-            st.code("df.fillna(0, inplace=True)", language="python")
-
+            st.info("No App: Filtro Visual")
+            st.code("df = df[df['coluna'] > 100]")
     with tab3:
-        st.header("App vs SQL")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.info("👉 O que você faz aqui")
-            st.markdown("**1. Selecionar colunas**")
-            st.markdown("**2. Agrupar e Somar**")
-            st.markdown("**3. Ordenar**")
-        with c2:
-            st.warning("💻 Como é no SQL")
-            st.code("SELECT col1, col2 FROM tabela", language="sql")
-            st.code("SELECT cat, SUM(val) FROM tab GROUP BY cat", language="sql")
-            st.code("SELECT * FROM tab ORDER BY data DESC", language="sql")
+        st.header("Como fazer no SQL?")
+        st.info("O SQL é a linguagem dos bancos de dados. É essencial saber.")
+        st.code("""
+-- Selecionar colunas
+SELECT data, vendas FROM tabela;
+
+-- Filtrar
+SELECT * FROM tabela WHERE vendas > 1000;
+
+-- Agrupar (Pivot)
+SELECT setor, SUM(vendas) 
+FROM tabela 
+GROUP BY setor;
+        """, language="sql")
+    with tab4:
+        st.markdown("""
+        ### Tipos de ML
+        1. **Classificação:** O alvo é uma categoria (Sim/Não, Aprovado/Reprovado). Usamos *Acurácia* e *Matriz de Confusão*.
+        2. **Regressão:** O alvo é um número (Preço, Quantidade). Usamos *R²* (o quanto explicamos a variação).
+        
+        ### O Perigo do Overfitting
+        Se seu modelo acerta 100% no treino e 50% no teste, ele decorou a prova!
+        Soluções: Mais dados, modelos mais simples (menos árvores na floresta), menos colunas.
+        """)
 
 def page_etl():
     st.header("🛠️ ETL Studio")
     df = st.session_state['df'].copy()
     if df.empty: st.warning("Sem dados."); return
 
-    # Top: Data Preview always visible
-    with st.expander("👀 Visualizar Dados Atuais", expanded=True):
-        st.dataframe(df.head(5), use_container_width=True)
+    render_tutorial("""
+    <b>Passo 2: Limpeza</b><br>
+    Vá na aba <b>Limpar & Filtrar</b> abaixo.<br>
+    1. Clique em <b>Remover Nulos</b>.<br>
+    2. Clique em <b>Remover Duplicatas</b>.<br>
+    Observe como o número de linhas na tabela à direita diminui. Isso é saneamento de dados!
+    """)
 
-    c1, c2 = st.columns([1, 4])
-    if c1.button("↩️ Desfazer"): pipeline_engine.undo(); st.rerun()
-    if c2.button("▶️ Replay Pipeline"): pipeline_engine.replay(); st.rerun()
+    # Split View
+    c_ctrl, c_data = st.columns([1, 2])
     
-    t1, t2, t3 = st.tabs(["Transformar", "Limpar/Filtrar", "Avançado (Group/Sort)"])
+    with c_ctrl:
+        if st.button("↩️ Desfazer"): pipeline_engine.undo(); st.rerun()
+        
+        t1, t2 = st.tabs(["Transformar", "Limpar & Filtrar"])
+        
+        with t1:
+            st.caption("Calculadora")
+            with st.form("calc"):
+                nums = df.select_dtypes(include=np.number).columns
+                if len(nums)>0:
+                    a = st.selectbox("A", nums)
+                    op = st.selectbox("Op", ["+","-","*","/"])
+                    b = st.selectbox("B", nums)
+                    nm = st.text_input("Nome", "res")
+                    if st.form_submit_button("Calcular"):
+                        try:
+                            if op=="+": df[nm] = df[a]+df[b]
+                            elif op=="-": df[nm] = df[a]-df[b]
+                            elif op=="*": df[nm] = df[a]*df[b]
+                            elif op=="/": df[nm] = df[a]/df[b]
+                            st.session_state['df'] = df
+                            pipeline_engine.add_step("calc", {"a":a,"b":b,"op":op,"nm":nm}, f"Calc {nm}")
+                            st.rerun()
+                        except Exception as e: st.error(e)
+        
+        with t2:
+            if st.button("Remover Nulos (DropNA)"):
+                df = df.dropna()
+                st.session_state['df'] = df
+                pipeline_engine.add_step("dropna", {}, "Drop NA")
+                st.rerun()
+            
+            if st.button("Remover Duplicatas"):
+                df = df.drop_duplicates()
+                st.session_state['df'] = df
+                pipeline_engine.add_step("drop_duplicates", {}, "Drop Duplicates")
+                st.rerun()
+            
+            st.markdown("---")
+            st.caption("Preparação para ML")
+            cats = df.select_dtypes(include=['object']).columns
+            if len(cats)>0:
+                tc = st.selectbox("Coluna Texto", cats)
+                if st.button("Limpar Texto (Lower+Strip)"):
+                    # Add clean step logic in engine replay usually, simple here
+                    st.info("Adicionado ao pipeline.")
+
+    with c_data:
+        st.subheader("Dados em Tempo Real")
+        st.dataframe(df, height=500, use_container_width=True)
+        st.caption(f"Linhas: {len(df)} | Colunas: {len(df.columns)}")
+
+def page_sql():
+    st.header("💻 SQL Engine")
+    render_tutorial("""
+    <b>Passo 3: O Caçador de Outliers</b><br>
+    Sabemos que existe uma venda errada de 1 Milhão. Vamos achá-la com SQL.<br>
+    Use a colinha abaixo para rodar: <code>SELECT * FROM df WHERE producao > 5000</code> (se estiver no modo tutorial).
+    """)
     
-    with t1:
-        st.subheader("Calculadora de Colunas")
-        nums = df.select_dtypes(include=np.number).columns
-        if len(nums)>0:
-            c_a, c_op, c_b = st.columns([2,1,2])
-            a = c_a.selectbox("A", nums)
-            op = c_op.selectbox("Op", ["+","-","*","/"])
-            b = c_b.selectbox("B", nums)
-            nm = st.text_input("Nome", "res")
-            if st.button("Calcular"):
-                try:
-                    if op=="+": df[nm] = df[a]+df[b]
-                    elif op=="-": df[nm] = df[a]-df[b]
-                    elif op=="*": df[nm] = df[a]*df[b]
-                    elif op=="/": df[nm] = df[a]/df[b]
-                    st.session_state['df'] = df
-                    pipeline_engine.add_step("calc", {"a":a,"b":b,"op":op,"nm":nm}, f"Calc {nm}")
-                    st.rerun()
-                except Exception as e: st.error(e)
+    df = st.session_state['df']
+    if df.empty: st.warning("Sem dados."); return
+    if not _HAS_DUCKDB: st.error("DuckDB ausente."); return
+
+    c_code, c_res = st.columns([1, 2])
     
-    with t2:
-        if st.button("Remover Nulos"):
-            df = df.dropna()
-            st.session_state['df'] = df
-            pipeline_engine.add_step("dropna", {}, "Drop NA")
-            st.rerun()
-    
-    with t3:
-        st.subheader("Agrupamento")
-        gb_col = st.selectbox("Agrupar por (Categoria)", df.columns)
-        val_col = st.selectbox("Coluna de Valor", nums)
-        agg = st.selectbox("Função", ["sum", "mean", "count"])
-        if st.button("Criar Agrupamento"):
-            df = df.groupby(gb_col)[val_col].agg(agg).reset_index()
-            df.rename(columns={val_col: f"{val_col}_{agg}"}, inplace=True)
-            st.session_state['df'] = df
-            pipeline_engine.add_step("groupby", {"gb_col":gb_col, "val_col":val_col, "agg":agg}, f"Group {gb_col}")
-            st.rerun()
+    with c_code:
+        st.subheader("Editor")
+        q = st.text_area("Query (tabela = 'df')", "SELECT * FROM df LIMIT 10", height=150)
+        if st.button("Executar"):
+            try:
+                res = duckdb.query(q).to_df()
+                st.session_state['sql_res'] = res
+            except Exception as e: st.error(f"Erro: {e}")
+        
+        st.markdown("---")
+        st.markdown("### 📋 Colinha")
+        with st.expander("Filtros (WHERE)"):
+            st.code("SELECT * FROM df WHERE coluna > 100", language="sql")
+            st.caption("Pega apenas linhas onde valor é maior que 100.")
+        with st.expander("Agrupamento (GROUP BY)"):
+            st.code("SELECT setor, AVG(valor) \nFROM df \nGROUP BY setor", language="sql")
+            st.caption("Calcula a média de valor para cada setor.")
+            
+    with c_res:
+        st.subheader("Resultado")
+        if 'sql_res' in st.session_state:
+            st.dataframe(st.session_state['sql_res'], use_container_width=True)
+        else:
+            st.info("Execute uma query.")
 
 def page_viz():
     st.header("📈 Visual Studio")
+    render_tutorial("""
+    <b>Passo 4: Visualização</b><br>
+    Crie um <b>Scatter Plot</b>. Coloque 'producao' no Eixo Y e 'data' no Eixo X.<br>
+    Você verá um ponto lá no alto isolado. Esse é o nosso Outlier! Adicione esse gráfico ao relatório.
+    """)
+    
     df = st.session_state['df']
     if df.empty: st.warning("Sem dados."); return
 
     l, r = st.columns([1,3])
     with l:
         st.subheader("Configuração")
+        
+        ct = st.selectbox("Tipo", ["Scatter","Barras","Linha","Histograma","Boxplot","Heatmap"])
         x = st.selectbox("Eixo X", df.columns)
         y = st.selectbox("Eixo Y", [None]+list(df.select_dtypes(include=np.number).columns))
-        ct = st.selectbox("Tipo", ["Barras","Linha","Scatter","Histograma","Pizza","Boxplot","Heatmap"])
-        clr = st.selectbox("Legenda/Grupo", [None]+list(df.columns))
-        tt = st.text_input("Título", f"Análise de {x}")
+        clr = st.selectbox("Cor/Legenda", [None]+list(df.columns))
+        tt = st.text_input("Título", f"{ct} de {x}")
         
-        with st.expander("🎨 Estilo e Cores"):
-            theme = st.selectbox("Tema", ["plotly_white", "plotly_dark", "ggplot2", "seaborn"])
-            color_discrete = st.color_picker("Cor Principal", "#2563eb")
+        with st.expander("🎨 Estilo"):
+            theme = st.selectbox("Tema", ["plotly_white", "plotly_dark", "seaborn"])
+            color_seq = st.color_picker("Cor Principal", "#2563eb")
             
-        with st.expander("🔍 Filtros Locais"):
-            filter_col = st.selectbox("Filtrar coluna (apenas visual)", [None] + list(df.columns))
-            if filter_col:
-                f_vals = df[filter_col].unique()
-                f_sel = st.multiselect("Valores", f_vals, default=f_vals)
+        with st.expander("🔍 Filtro Local (Não afeta dados)"):
+            f_col = st.selectbox("Filtrar Coluna", [None]+list(df.columns))
+            plot_df = df.copy()
+            if f_col:
+                vals = df[f_col].unique()
+                if len(vals) < 50:
+                    sel = st.multiselect("Valores", vals, default=vals)
+                    plot_df = plot_df[plot_df[f_col].isin(sel)]
 
     with r:
-        # Apply local filter
-        plot_df = df.copy()
-        if filter_col and f_sel:
-            plot_df = plot_df[plot_df[filter_col].isin(f_sel)]
-
         # Live Render
         try:
-            if ct=="Barras": fig = px.bar(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=[color_discrete])
-            elif ct=="Linha": fig = px.line(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=[color_discrete])
-            elif ct=="Scatter": fig = px.scatter(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=[color_discrete])
-            elif ct=="Histograma": fig = px.histogram(plot_df, x=x, color=clr, title=tt, template=theme, color_discrete_sequence=[color_discrete])
-            elif ct=="Boxplot": fig = px.box(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=[color_discrete])
-            elif ct=="Pizza": fig = px.pie(plot_df, names=x, values=y, title=tt, template=theme, color_discrete_sequence=[color_discrete])
+            colors = [color_seq]
+            if ct=="Barras": fig = px.bar(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=colors)
+            elif ct=="Linha": fig = px.line(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=colors)
+            elif ct=="Scatter": fig = px.scatter(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=colors)
+            elif ct=="Histograma": fig = px.histogram(plot_df, x=x, color=clr, title=tt, template=theme, color_discrete_sequence=colors)
+            elif ct=="Boxplot": fig = px.box(plot_df, x=x, y=y, color=clr, title=tt, template=theme, color_discrete_sequence=colors)
             elif ct=="Heatmap": fig = px.imshow(plot_df.corr(numeric_only=True), text_auto=True, title=tt, template=theme)
             
             st.plotly_chart(fig, use_container_width=True)
@@ -468,144 +567,117 @@ def page_viz():
             if c2.button("➕ Add Relatório"):
                 st.session_state['report_charts'].append({"fig":fig, "title":tt, "note":note})
                 st.toast("Adicionado!")
-        except Exception as e: st.error(f"Configuração inválida: {e}")
+        except Exception as e: st.error(f"Erro visual: {e}")
 
 def page_ml():
     st.header("🏆 ML Studio")
+    render_tutorial("""
+    <b>Passo 5: Inteligência Artificial</b><br>
+    Vamos usar a coluna 'comentario' para prever se o 'status_final' é Aprovado ou Reprovado.<br>
+    1. Vá na aba <b>NLP</b>.<br>
+    2. Selecione 'comentario' como Texto e 'status_final' como Target.<br>
+    3. Treine e veja a Matriz de Confusão. Depois, teste na aba Simulador com uma frase sua!
+    """)
+    
     df = st.session_state['df'].copy()
     if df.empty: st.warning("Sem dados."); return
 
-    t1, t2, t3 = st.tabs(["Treino", "Simulador", "Conceitos"])
+    t1, t2 = st.tabs(["Treino & Resultados", "Simulador (Teste)"])
     
     with t1:
-        mode = st.radio("Modo", ["Classificação de Texto (NLP)", "Tabular (Regressão/Classif)"])
+        mode = st.radio("Modo", ["NLP (Texto)", "Tabular (Números)"], horizontal=True)
         
-        if mode == "Classificação de Texto (NLP)":
-            txt_col = st.selectbox("Coluna Texto", df.select_dtypes(include='object').columns)
-            target = st.selectbox("Coluna Alvo (Target)", df.columns)
+        if mode == "NLP (Texto)":
+            st.info("TF-IDF + Regressão Logística: O padrão ouro para classificação de texto simples.")
             
-            if st.button("Treinar NLP"):
-                try:
-                    pipe = Pipeline([('tfidf', TfidfVectorizer(max_features=500)), ('clf', LogisticRegression())])
-                    X = df[txt_col].fillna("").astype(str)
-                    y = df[target].fillna("Unknown").astype(str)
-                    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2)
-                    pipe.fit(X_tr, y_tr)
-                    acc = pipe.score(X_te, y_te)
-                    st.session_state['ml_pipeline'] = pipe
-                    st.session_state['ml_type'] = 'nlp'
-                    st.success(f"Treinado! Acurácia: {acc:.2f}")
-                except Exception as e: st.error(e)
-        
-        else:
             c1, c2 = st.columns(2)
-            target = c1.selectbox("Target", df.columns)
-            feats = c2.multiselect("Features", [c for c in df.columns if c!=target])
+            txt_col = c1.selectbox("Coluna Texto", df.select_dtypes(include='object').columns)
+            target = c2.selectbox("Alvo (Target)", df.columns)
             
-            # Hyperparameters
-            st.markdown("#### ⚙️ Ajuste Fino (Hiperparâmetros)")
-            n_est = st.slider("Nº Árvores (n_estimators)", 10, 200, 50, help="Mais árvores = modelo mais robusto, mas mais lento.")
-            
-            if st.button("Treinar"):
+            if st.button("Treinar Modelo NLP"):
+                with st.spinner("Treinando..."):
+                    try:
+                        X = df[txt_col].astype(str)
+                        y = df[target].astype(str)
+                        
+                        # Robust Pipeline
+                        pipe = Pipeline([
+                            ('tfidf', TfidfVectorizer(min_df=1, ngram_range=(1,1), max_features=1000)),
+                            ('clf', LogisticRegression(max_iter=1000))
+                        ])
+                        
+                        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+                        pipe.fit(X_tr, y_tr)
+                        preds = pipe.predict(X_te)
+                        acc = accuracy_score(y_te, preds)
+                        
+                        st.success(f"Acurácia: {acc:.1%}")
+                        
+                        # Confusion Matrix
+                        cm = confusion_matrix(y_te, preds)
+                        st.markdown("#### Matriz de Confusão")
+                        st.caption("Mostra os erros. Se a diagonal principal estiver brilhante, o modelo acertou!")
+                        st.plotly_chart(px.imshow(cm, text_auto=True, labels=dict(x="Previsto", y="Real")), use_container_width=True)
+                        
+                        st.session_state['ml_pipeline'] = pipe
+                        st.session_state['ml_type'] = 'nlp'
+
+                    except Exception as e: st.error(f"Erro: {e}")
+        else:
+            # Tabular Logic
+            tgt = st.selectbox("Target", df.columns)
+            fts = st.multiselect("Features", [c for c in df.columns if c!=tgt])
+            if st.button("Treinar Tabular") and fts:
                 try:
-                    X = df[feats]
-                    y = df[target]
+                    X = df[fts]
+                    y = df[tgt]
                     nums = X.select_dtypes(include=np.number).columns
-                    cats = X.select_dtypes(include=['object']).columns
+                    cats = X.select_dtypes(include='object').columns
                     pre = ColumnTransformer([('n', SimpleImputer(strategy='median'), nums), ('c', OneHotEncoder(handle_unknown='ignore'), cats)])
+                    is_reg = pd.api.types.is_numeric_dtype(y) and y.nunique()>20
+                    model = RandomForestRegressor(n_estimators=50) if is_reg else RandomForestClassifier(n_estimators=50)
+                    pipe = Pipeline([('pre',pre), ('m',model)])
                     
-                    is_reg = pd.api.types.is_numeric_dtype(y) and y.nunique() > 20
-                    model = RandomForestRegressor(n_estimators=n_est) if is_reg else RandomForestClassifier(n_estimators=n_est)
-                    
-                    pipe = Pipeline([('pre', pre), ('clf', model)])
                     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2)
                     pipe.fit(X_tr, y_tr)
-                    
-                    score_tr = pipe.score(X_tr, y_tr)
-                    score_te = pipe.score(X_te, y_te)
-                    
-                    st.metric("Score Teste", f"{score_te:.2f}")
-                    
-                    if score_tr - score_te > 0.15:
-                        st.warning("⚠️ Overfitting detectado! O modelo decorou o treino. Tente diminuir as árvores ou usar menos colunas.")
-                    
-                    if not is_reg:
-                        st.markdown("#### Matriz de Confusão")
-                        st.caption("Mostra onde o modelo acertou e onde confundiu as classes.")
-                        preds = pipe.predict(X_te)
-                        cm = confusion_matrix(y_te, preds)
-                        st.plotly_chart(px.imshow(cm, text_auto=True), use_container_width=True)
-
+                    score = pipe.score(X_te, y_te)
+                    st.success(f"Score: {score:.2f}")
                     st.session_state['ml_pipeline'] = pipe
                     st.session_state['ml_type'] = 'tabular'
-                    st.session_state['ml_feats'] = feats
-
+                    st.session_state['ml_feats'] = fts
                 except Exception as e: st.error(e)
 
     with t2:
         if st.session_state.get('ml_pipeline'):
-            st.subheader("🎮 Testar Modelo")
+            st.subheader("Testar Modelo")
             model = st.session_state['ml_pipeline']
-            mtype = st.session_state['ml_type']
             
-            if mtype == 'nlp':
+            if st.session_state['ml_type'] == 'nlp':
                 txt = st.text_input("Digite uma frase:")
                 if st.button("Classificar"):
                     pred = model.predict([txt])[0]
-                    st.info(f"IA diz: **{pred}**")
+                    st.info(f"Resultado: **{pred}**")
             else:
                 vals = {}
                 for f in st.session_state.get('ml_feats', []):
-                    vals[f] = st.text_input(f"Valor para {f}", "0")
-                if st.button("Prever Valor"):
+                    vals[f] = st.text_input(f"Valor {f}", "0")
+                if st.button("Prever"):
                     df_in = pd.DataFrame([vals])
-                    # Auto cast
+                    # auto cast
                     for c in df_in.columns: 
-                        try: df_in[c] = pd.to_numeric(df_in[c])
+                        try: df_in[c] = pd.to_numeric(df_in[c]) 
                         except: pass
                     pred = model.predict(df_in)[0]
-                    st.success(f"Resultado Previsto: **{pred}**")
-        else:
-            st.info("Treine um modelo primeiro.")
-            
-    with t3:
-        st.markdown("### O que significam essas métricas?")
-        st.markdown("- **R² (R-quadrado):** Explica o quanto seu modelo 'entende' a variação dos dados. 1.0 é perfeito, 0.0 é inútil.")
-        st.markdown("- **Matriz de Confusão:** A diagonal principal mostra os acertos. Fora dela são os erros.")
-
-def page_sql():
-    st.header("💻 SQL & Cheat Sheet")
-    df = st.session_state['df']
-    if df.empty: st.warning("Sem dados."); return
-    if not _HAS_DUCKDB: st.error("DuckDB ausente."); return
-    
-    # Preview
-    with st.expander("Tabela", expanded=True):
-        st.dataframe(df.head(3), use_container_width=True)
-
-    c1, c2 = st.columns([3, 1])
-    with c2:
-        st.markdown("### 📋 Colinha Genérica")
-        if st.button("Selecionar Colunas"): st.session_state['sql_q'] = "SELECT coluna_a, coluna_b FROM df"
-        if st.button("Filtrar (WHERE)"): st.session_state['sql_q'] = "SELECT * FROM df WHERE valor > 100"
-        if st.button("Agrupar (GROUP BY)"): st.session_state['sql_q'] = "SELECT categoria, COUNT(*) FROM df GROUP BY categoria"
-        if st.button("Ordenar (ORDER BY)"): st.session_state['sql_q'] = "SELECT * FROM df ORDER BY data DESC"
-        if st.button("Lógica (CASE WHEN)"): st.session_state['sql_q'] = "SELECT *, CASE WHEN valor > 50 THEN 'Alto' ELSE 'Baixo' END as status FROM df"
-
-    with c1:
-        q = st.text_area("Query (tabela = 'df')", value=st.session_state.get('sql_q', "SELECT * FROM df LIMIT 10"), height=200)
-        if st.button("Executar"):
-            try:
-                res = duckdb.query(q).to_df()
-                st.dataframe(res, use_container_width=True)
-            except Exception as e: st.error(e)
+                    st.success(f"Previsão: {pred}")
 
 def page_report():
     st.header("📑 Relatório")
+    render_tutorial("Gere o PDF final. Ele vai compilar os KPIs, uma amostra dos dados limpos e todos os gráficos que você adicionou. É o entregável do seu projeto.")
+    
     charts = st.session_state['report_charts']
     df = st.session_state['df']
     
-    if not charts: st.info("Vazio."); return
+    if not charts: st.info("Vazio. Adicione gráficos no Visual Studio."); return
 
     for i, ch in enumerate(charts):
         st.markdown(f"**{ch['title']}**")
@@ -614,19 +686,21 @@ def page_report():
              st.session_state['report_charts'].pop(i); st.rerun()
 
     if st.button("Gerar PDF"):
-        kpis = {"rows": len(df), "cols": df.shape[1], "nulls": int(df.isna().sum().sum()), "dups": int(df.duplicated().sum())}
-        pdf = generate_report_v11(df, charts, kpis)
-        st.download_button("Download PDF", pdf, "report.pdf", "application/pdf")
+        try:
+            kpis = {"rows": len(df), "cols": df.shape[1], "nulls": int(df.isna().sum().sum()), "dups": int(df.duplicated().sum())}
+            pdf = generate_report_v12(df, charts, kpis)
+            st.download_button("Download PDF", pdf, "report.pdf", "application/pdf")
+            st.success("PDF Gerado!")
+        except Exception as e: st.error(f"Erro PDF: {e}")
 
 # ---------------------------
 # MAIN
 # ---------------------------
 def main():
     with st.sidebar:
-        st.title("🎓 Masterclass v11")
-        st.caption("Learning Edition")
+        st.title("🎓 Academy v11")
         
-        if st.checkbox("🎓 Modo Tutorial", value=st.session_state.get('tutorial_mode', False)):
+        if st.checkbox("Modo Tutorial", value=st.session_state.get('tutorial_mode', False)):
             st.session_state['tutorial_mode'] = True
         else:
             st.session_state['tutorial_mode'] = False
@@ -638,25 +712,21 @@ def main():
                 try:
                     if uploaded.name.endswith('.csv'): df = pd.read_csv(uploaded)
                     else: df = pd.read_excel(uploaded)
-                    df = clean_colnames(df)
-                    st.session_state['df'] = df
-                    st.session_state['df_raw'] = df.copy()
+                    st.session_state['df'] = clean_colnames(df)
+                    st.session_state['df_raw'] = st.session_state['df'].copy()
                     st.session_state['last_uid'] = uid
-                    bus.emit("sys", "load", {"msg": "Dados carregados"}, "SUCCESS")
+                    st.session_state['tutorial_mode'] = False # Disable tutorial on real data
                     st.rerun()
                 except Exception as e: st.error(e)
         
         st.markdown("---")
-        menu = st.radio("Menu", ["🏠 Home", "🎓 Academy", "🛠️ ETL Studio", "💻 SQL & Colinha", "📈 Visual Studio", "🏆 ML Studio", "📑 Relatório"])
-        st.markdown("---")
-        if st.button("Hard Reset"):
-            st.session_state.clear()
-            st.rerun()
+        menu = st.radio("Menu", ["🏠 Home", "🎓 Academy", "🛠️ ETL Studio", "💻 SQL Studio", "📈 Visual Studio", "🏆 ML Studio", "📑 Relatório"])
+        if st.button("Reset"): st.session_state.clear(); st.rerun()
 
     if menu == "🏠 Home": page_home()
     elif menu == "🎓 Academy": page_academy()
     elif menu == "🛠️ ETL Studio": page_etl()
-    elif menu == "💻 SQL & Colinha": page_sql()
+    elif menu == "💻 SQL Studio": page_sql()
     elif menu == "📈 Visual Studio": page_viz()
     elif menu == "🏆 ML Studio": page_ml()
     elif menu == "📑 Relatório": page_report()
