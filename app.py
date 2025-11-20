@@ -39,12 +39,14 @@ try:
 except Exception:
     joblib = None
 
+# --- ALTERAÇÃO AQUI: KALEIDO DESATIVADO PARA EVITAR TRAVAMENTO ---
 _HAS_KALEIDO = False
-try:
-    import kaleido
-    _HAS_KALEIDO = True
-except Exception:
-    _HAS_KALEIDO = False
+# try:
+#     import kaleido
+#     _HAS_KALEIDO = True
+# except Exception:
+#     _HAS_KALEIDO = False
+# -----------------------------------------------------------------
 
 # ML libs (light usage)
 from sklearn.decomposition import PCA
@@ -127,7 +129,7 @@ def format_number(n):
 def safe_display_dataframe(df: pd.DataFrame, height: int = 400):
     """Display dataframe with fallback to string coercion on Arrow errors."""
     try:
-        st.dataframe(df, width=None, height=height, use_container_width=True) # width="stretch" deprecated warning fix
+        st.dataframe(df, width=None, height=height, use_container_width=True)
     except Exception as e:
         logger.warning("st.dataframe Arrow conversion failed; coercing problematic columns to str.")
         df2 = df.copy()
@@ -350,7 +352,6 @@ def generate_pdf_with_charts(df: pd.DataFrame, charts: List[Dict[str,Any]], kpis
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # -------------------- Simple sentiment --------------------
-
 _POS_WORDS = {"good","great","excelent","excellent","bom","otimo","ótimo","agradavel","satisfeito","positivo","love","adorei","recomendo"}
 _NEG_WORDS = {"bad","terrible","horrible","ruim","péssimo","pessimo","odioso","odio","frustrado","frustrante","pior","hate","detestei","não gostei","nao gostei","dinheiro jogado fora","devolvi"}
 
@@ -412,7 +413,7 @@ def sidebar_area():
     if st.sidebar.button("Resetar sessão"):
         for k in list(st.session_state.keys()):
             del st.session_state[k]
-        st.rerun() # Updated from experimental_rerun
+        st.rerun()
     return uploaded, use_local
 
 # -------------------- Main app --------------------
