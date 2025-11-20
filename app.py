@@ -1,614 +1,548 @@
+"""
+Enterprise Analytics — BI Edition (No-Code) — Refactor v3
+- Fixes deprecation warnings for Streamlit 1.51.0+ (width="stretch")
+- Removes legacy ML artifacts causing PCA errors
+- Single-file Streamlit app (modular functions/classes)
+- Robust file reading (CSV/Excel, encodings fallback)
+- Data Studio: create columns, conditional columns, date extraction, pivot/unpivot, join/merge, split text
+- Visual Studio: many chart types + presets + palettes + add-to-dashboard
+- Dashboard Builder: assemble charts, remove, export
+- Data Quality: KPIs, missing heatmap, outliers detection
+- Export: CSV, Excel, PDF (basic)
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import sqlite3
+from plotly.subplots import make_subplots
+import io
+import base64
 import joblib
-import re
-import unicodedata
 import logging
-from io import BytesIO
-from datetime import datetime
-
-# --- CIENTÍFICO & ESTATÍSTICA ---
-import statsmodels.api as sm
-from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.arima.model import ARIMA
-from scipy import stats
-
-# --- MACHINE LEARNING ---
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, RobustScaler, MinMaxScaler, PowerTransformer
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor, GradientBoostingClassifier, HistGradientBoostingRegressor, HistGradientBoostingClassifier
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, f1_score, classification_report, confusion_matrix, silhouette_score
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.decomposition import PCA
-from sklearn.inspection import permutation_importance
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.feature_selection import SelectKBest, f_classif, f_regression, mutual_info_classif, mutual_info_regression
-
-# --- PDF ---
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
+from datetime import datetime
+from typing import List, Tuple, Dict, Optional
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(
-    page_title="Enterprise Analytics Ultra", 
-    layout="wide", 
-    page_icon="💠", 
-    initial_sidebar_state="expanded"
-)
+# DEV LOCAL PATH
+UPLOADED_FILE_PATH = "/mnt/data/uploaded_dataset.csv" 
 
+st.set_page_config(page_title="Enterprise Analytics — BI Edition", layout="wide", page_icon="📊")
 logging.basicConfig(level=logging.INFO)
 
-# ==============================================================================
-# 🎨 TEMA & UI (PREMIUM)
-# ==============================================================================
-def set_theme():
-    card_bg = "#1E1E1E"
-    text_c = "#FAFAFA"
-    accent = "#00CC96"
-    gold = "#E1C16E"
-    
-    css = f"""
-    <style>
-        .metric-card {{
-            background-color: {card_bg};
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 5px solid {accent};
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            text-align: center;
-            margin-bottom: 15px;
-        }}
-        .metric-card h3 {{ margin: 0; font-size: 0.9rem; color: #AAA; text-transform: uppercase; letter-spacing: 1px; }}
-        .metric-card h2 {{ margin: 5px 0; font-size: 2rem; color: {text_c}; font-weight: 700; }}
-        
-        [data-baseweb="tag"] {{ background-color: {gold} !important; color: #111 !important; }}
-        
-        h1, h2, h3 {{ font-family: 'Segoe UI', sans-serif; }}
-        .stTabs [data-baseweb="tab-list"] {{ gap: 4px; }}
-        .stTabs [data-baseweb="tab"] {{ background-color: #111; border-radius: 4px 4px 0 0; }}
-        .stTabs [aria-selected="true"] {{ background-color: {card_bg}; border-top: 2px solid {accent}; }}
-        
-        .insight-box {{
-            background-color: rgba(0, 204, 150, 0.05);
-            border: 1px solid {accent};
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 15px;
-        }}
-        .insight-title {{ color: {accent}; font-weight: bold; margin-bottom: 5px; }}
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
-
-# ==============================================================================
-# 🧠 DATA ENGINE & SQL
-# ==============================================================================
-class DataEngine:
-    @staticmethod
-    @st.cache_data(show_spinner=False)
-    def load_data(file):
+# ---------------------------
+# Utilities & Robust IO
+# ---------------------------
+def try_read_csv(file_obj, encoding_list=("utf-8", "latin1", "cp1252")):
+    last_exc = None
+    for enc in encoding_list:
         try:
-            if file.name.endswith("csv"): return pd.read_csv(file)
-            return pd.read_excel(file)
-        except Exception as e: return None
-
-    @staticmethod
-    def run_query(df, query):
-        conn = sqlite3.connect(':memory:')
-        df.to_sql('dados', conn, index=False, if_exists='replace')
-        try:
-            result = pd.read_sql_query(query, conn)
-            return result, None
+            file_obj.seek(0)
+            return pd.read_csv(file_obj, encoding=enc)
         except Exception as e:
-            return None, str(e)
-        finally:
-            conn.close()
+            last_exc = e
+            continue
+    raise last_exc
 
-# ==============================================================================
-# 💡 AUTO INSIGHTS ENGINE (PREMIUM)
-# ==============================================================================
-class InsightsEngine:
-    def generate_column_insights(self, df, col):
-        insights = []
-        
-        # Nulos
-        null_pct = df[col].isna().mean()
-        if null_pct > 0.05:
-            insights.append(f"⚠️ **Dados Faltantes:** {null_pct:.1%} nulos. Acima do ideal (5%).")
-        
-        # Numéricos
-        if pd.api.types.is_numeric_dtype(df[col]):
-            skew = df[col].skew()
-            if abs(skew) > 1:
-                insights.append(f"📈 **Assimetria:** Skewness {skew:.2f}. Considere log/power transform.")
-            
-            # Outliers (Z-Score > 3)
-            z_scores = stats.zscore(df[col].dropna())
-            outliers = (np.abs(z_scores) > 3).sum()
-            if outliers > 0:
-                insights.append(f"🚨 **Outliers (Z-Score):** {outliers} valores extremos (>3 sigma).")
-            
-            # Correlação
-            df_num = df.select_dtypes(include=np.number)
-            if len(df_num.columns) > 1:
-                corrs = df_num.corr()[col].drop(col)
-                high_corr = corrs[abs(corrs) > 0.85]
-                for c_name, c_val in high_corr.items():
-                    insights.append(f"🔗 **Correlação Forte:** {c_val:.2f} com '{c_name}'. Risco de multicolinearidade.")
-        
-        # Categóricos
+def safe_read(file):
+    """Read CSV or Excel robustly. Accepts file-like (uploader) or path."""
+    try:
+        if hasattr(file, "read"):
+            name = getattr(file, "name", "")
+            if name.lower().endswith(".csv"):
+                try:
+                    return try_read_csv(file)
+                except Exception:
+                    file.seek(0)
+                    return pd.read_csv(file, engine="python", encoding_errors="ignore")
+            else:
+                file.seek(0)
+                return pd.read_excel(file, engine="openpyxl")
         else:
-            n_unique = df[col].nunique()
-            if n_unique > 50:
-                insights.append(f"🔢 **Alta Cardinalidade:** {n_unique} categorias. One-Hot pode ser custoso.")
-            
-            if n_unique == 1:
-                insights.append("🛑 **Variância Zero:** Coluna constante. Pode ser removida.")
-                
-            top_val = df[col].value_counts(normalize=True).iloc[0]
-            if top_val > 0.8:
-                insights.append(f"⚖️ **Desbalanceamento:** '{df[col].value_counts().index[0]}' domina {top_val:.1%} dos dados.")
-                
-        return insights
+            path = str(file)
+            if path.lower().endswith(".csv"):
+                try:
+                    return pd.read_csv(path)
+                except Exception:
+                    return pd.read_csv(path, encoding="latin1", engine="python")
+            else:
+                return pd.read_excel(path, engine="openpyxl")
+    except Exception as e:
+        raise
 
-# ==============================================================================
-# 🔮 TIME SERIES FORECAST PRO (AUTO-ARIMA)
-# ==============================================================================
-class TimeSeriesEngine:
-    def auto_forecast(self, df, date_col, val_col, horizon=30):
-        # Prep
-        ts = df.set_index(pd.to_datetime(df[date_col]))[val_col].sort_index()
-        ts = ts.asfreq(pd.infer_freq(ts.index) or 'D')
-        ts = ts.fillna(method='ffill')
-        
-        # Grid Search ARIMA Lite
-        best_aic = float('inf')
-        best_order = (1,1,1)
-        best_model = None
-        
-        # Grid reduzido para performance em tempo real
-        for p in [0, 1, 2]:
-            for d in [0, 1]:
-                for q in [0, 1, 2]:
-                    try:
-                        model = ARIMA(ts, order=(p,d,q)).fit()
-                        if model.aic < best_aic:
-                            best_aic = model.aic
-                            best_order = (p,d,q)
-                            best_model = model
-                    except: continue
-                    
-        if best_model is None: return None, None, None, None
-        
-        # Forecast
-        forecast_res = best_model.get_forecast(steps=horizon)
-        pred_mean = forecast_res.predicted_mean
-        conf_int = forecast_res.conf_int()
-        
-        return ts, pred_mean, conf_int, best_order
+def clean_colnames(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.replace(r"\s+", "_", regex=True)
+        .str.replace(r"[^0-9a-zA-Z_]", "", regex=True)
+    )
+    return df
 
-# ==============================================================================
-# 🤖 AUTOML ENGINE (FEATURE SELECTION + MODELOS AVANÇADOS)
-# ==============================================================================
-class AutoMLEngine:
-    def train(self, df, target, features, algo, is_reg, use_fs=False):
-        X = df[features]
-        y = df[target]
-        
-        # Feature Selection
-        fs_step = []
-        if use_fs:
-            k = min(15, len(features))
-            # Seleciona K-Best baseado em F-Score
-            fs_step = [('fs', SelectKBest(score_func=f_regression if is_reg else f_classif, k=k))]
-        
-        # Preprocessor
-        num_cols = X.select_dtypes(include=np.number).columns
-        cat_cols = X.select_dtypes(exclude=np.number).columns
-        
-        preproc = ColumnTransformer([
-            ('num', Pipeline([('imp', SimpleImputer(strategy='median')), ('scl', StandardScaler())]), num_cols),
-            ('cat', Pipeline([('imp', SimpleImputer(strategy='most_frequent')), ('enc', OneHotEncoder(handle_unknown='ignore', sparse_output=False))]), cat_cols)
-        ])
-        
-        # Modelo
-        if is_reg:
-            models = {
-                "Random Forest": RandomForestRegressor(n_jobs=-1),
-                "Hist Gradient Boosting": HistGradientBoostingRegressor() # LightGBM inspired
-            }
-        else:
-            models = {
-                "Random Forest": RandomForestClassifier(n_jobs=-1),
-                "Hist Gradient Boosting": HistGradientBoostingClassifier()
-            }
-            
-        # Pipeline Completo
-        steps = [('pre', preproc)] + fs_step + [('clf', models[algo])]
-        pipeline = Pipeline(steps)
-        
-        # Treino
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        pipeline.fit(X_train, y_train)
-        preds = pipeline.predict(X_test)
-        
-        # Feature Importance (Permutation - Agnóstico a modelo)
-        try:
-            result = permutation_importance(pipeline, X_test, y_test, n_repeats=3, random_state=42, n_jobs=-1)
-            imp = pd.DataFrame({'Feature': X.columns, 'Importance': result.importances_mean}).sort_values('Importance', ascending=False)
-        except: imp = None
-            
-        return pipeline, X_test, y_test, preds, imp
+def format_number(n):
+    try:
+        n = float(n)
+    except Exception:
+        return str(n)
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.2f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.2f}K"
+    return f"{n:.0f}"
 
-# ==============================================================================
-# 📄 PDF REPORT ENGINE
-# ==============================================================================
-def generate_pdf_report(df, kpis):
+# ---------------------------
+# PDF exporter (basic)
+# ---------------------------
+def generate_pdf_report(df: pd.DataFrame, charts: List[dict], kpis: dict) -> bytes:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "Relatorio Executivo de Analise", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(5)
-    
+    pdf.cell(0, 10, "Relatorio Executivo — Enterprise BI", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(6)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 8, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(6)
     
-    pdf.set_fill_color(240, 240, 240)
-    pdf.rect(10, 35, 190, 25, 'F')
-    pdf.set_y(40)
+    # KPIs
+    pdf.set_fill_color(240,240,240)
+    pdf.rect(10,40,190,28,'F')
+    pdf.set_y(44)
+    colw = 190/4
+    titles = ['Linhas','Colunas','Nulos','Duplicatas']
+    vals = [kpis.get('rows',''), kpis.get('cols',''), kpis.get('nulls',''), kpis.get('dups','')]
+    for i,t in enumerate(titles):
+        pdf.set_font("Helvetica","B",11)
+        pdf.cell(colw,8,t, align='C', new_x=XPos.RIGHT if i<3 else XPos.LMARGIN, new_y=YPos.TOP if i<3 else YPos.NEXT)
+    pdf.ln(6)
+    pdf.set_font("Helvetica","",11)
+    for i,v in enumerate(vals):
+        pdf.cell(colw,8,str(v), align='C', new_x=XPos.RIGHT if i<3 else XPos.LMARGIN, new_y=YPos.TOP if i<3 else YPos.NEXT)
+    pdf.ln(12)
     
-    pdf.set_font("Helvetica", "B", 12)
-    col_w = 190 / 4
+    # Short stats
+    pdf.set_font("Helvetica","B",12)
+    pdf.cell(0,8,"Resumo Estatistico (Top variaveis numericas)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(4)
+    desc = df.describe().T.reset_index().head(8)
+    if not desc.empty:
+        cols = ['index','mean','min','max']
+        if set(cols).issubset(desc.columns):
+            desc = desc[cols]
+            desc.columns = ['Variavel','Media','Min','Max']
+            w=[70,40,40,40]
+            pdf.set_font("Helvetica","B",10)
+            for i,c in enumerate(desc.columns):
+                pdf.cell(w[i],8,c,1,align='C', new_x=XPos.RIGHT if i<3 else XPos.LMARGIN, new_y=YPos.TOP if i<3 else YPos.NEXT)
+            pdf.set_font("Helvetica","",9)
+            for _,row in desc.iterrows():
+                for i,val in enumerate(row):
+                    txt = str(val)[:28]
+                    pdf.cell(w[i],7,txt,1,align='C' if i>0 else 'L', new_x=XPos.RIGHT if i<3 else XPos.LMARGIN, new_y=YPos.TOP if i<3 else YPos.NEXT)
+    pdf.ln(6)
     
-    headers = ["Total Linhas", "Total Colunas", "Dados Nulos", "Duplicatas"]
-    values = [f"{kpis['rows']:,}", f"{kpis['cols']}", f"{kpis['nulls']}", f"{kpis['dups']}"]
-    
-    for i, h in enumerate(headers):
-        align = XPos.RIGHT if i < 3 else XPos.LMARGIN
-        newy = YPos.TOP if i < 3 else YPos.NEXT
-        pdf.cell(col_w, 8, h, align='C', new_x=align, new_y=newy)
-    
-    pdf.set_font("Helvetica", "", 12)
-    for i, v in enumerate(values):
-        align = XPos.RIGHT if i < 3 else XPos.LMARGIN
-        newy = YPos.TOP if i < 3 else YPos.NEXT
-        pdf.cell(col_w, 8, v, align='C', new_x=align, new_y=newy)
-    
-    pdf.ln(20)
-    
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Resumo Estatistico (Top Variáveis):", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    
-    desc = df.describe().T.head(10).reset_index()
-    target_cols = ['index', 'mean', 'min', 'max']
-    if set(target_cols).issubset(desc.columns):
-        desc = desc[target_cols]
-        
-        pdf.set_font("Helvetica", "B", 10)
-        w = [70, 40, 40, 40]
-        for i, c in enumerate(desc.columns):
-            pdf.cell(w[i], 8, c, 1, align='C', new_x=XPos.RIGHT if i<3 else XPos.LMARGIN, new_y=YPos.TOP if i<3 else YPos.NEXT)
-            
-        pdf.set_font("Helvetica", "", 9)
-        for _, row in desc.iterrows():
-            for i, item in enumerate(row):
-                txt = str(item)[:25]
-                if isinstance(item, float): txt = f"{item:.2f}"
-                safe_txt = txt.encode('latin-1', 'replace').decode('latin-1')
-                pdf.cell(w[i], 7, safe_txt, 1, align='C' if i>0 else 'L', new_x=XPos.RIGHT if i<3 else XPos.LMARGIN, new_y=YPos.TOP if i<3 else YPos.NEXT)
-            
-    return pdf.output()
+    # List charts titles
+    pdf.set_font("Helvetica","B",12)
+    pdf.cell(0,8,"Gráficos no Relatório:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Helvetica","",10)
+    for ch in charts:
+        pdf.multi_cell(0,6,f"- {ch.get('title','(sem titulo)')} [{ch.get('type','')}]")
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# ==============================================================================
-# 🖥️ APP PRINCIPAL
-# ==============================================================================
+# ---------------------------
+# Data Quality Tools
+# ---------------------------
+def missing_heatmap(df: pd.DataFrame):
+    m = df.isna().astype(int)
+    if m.shape[1] > 50:
+        m = m.iloc[:, :50]
+    fig = px.imshow(m.T, aspect='auto', color_continuous_scale=['#e0e0e0','#ff6b6b'], labels={'x':'Index', 'y':'Columns'}, title='Mapa de Missing (1 = missing)')
+    return fig
+
+def detect_outliers_iqr(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    s = df[col].dropna()
+    q1, q3 = s.quantile([0.25, 0.75])
+    iqr = q3 - q1
+    low = q1 - 1.5 * iqr
+    high = q3 + 1.5 * iqr
+    return df[(df[col] < low) | (df[col] > high)]
+
+# ---------------------------
+# Data Studio (ETL features)
+# ---------------------------
+def create_column_arithmetic(df: pd.DataFrame, new_col: str, a: str, b: Optional[str], operator: str, b_value: Optional[float]=None):
+    df = df.copy()
+    try:
+        if b is not None:
+            if operator == '+': df[new_col] = df[a] + df[b]
+            elif operator == '-': df[new_col] = df[a] - df[b]
+            elif operator == '*': df[new_col] = df[a] * df[b]
+            elif operator == '/': df[new_col] = df[a] / df[b].replace(0, np.nan)
+        else:
+            if operator == '+': df[new_col] = df[a] + b_value
+            elif operator == '-': df[new_col] = df[a] - b_value
+            elif operator == '*': df[new_col] = df[a] * b_value
+            elif operator == '/': df[new_col] = df[a] / b_value if b_value != 0 else np.nan
+    except Exception:
+        raise
+    return df
+
+def create_column_if(df: pd.DataFrame, new_col: str, col: str, op: str, threshold: float, true_label: str, false_label: str):
+    df = df.copy()
+    ops = {">": df[col] > threshold, "<": df[col] < threshold, ">=": df[col] >= threshold, "<=": df[col] <= threshold, "==": df[col] == threshold, "!=": df[col] != threshold}
+    mask = ops.get(op, df[col] > threshold)
+    df[new_col] = np.where(mask, true_label, false_label)
+    return df
+
+def extract_date_component(df: pd.DataFrame, date_col: str, component: str, new_name: str):
+    df = df.copy()
+    if component == "year": df[new_name] = df[date_col].dt.year
+    elif component == "month": df[new_name] = df[date_col].dt.month
+    elif component == "day": df[new_name] = df[date_col].dt.day
+    elif component == "weekday": df[new_name] = df[date_col].dt.day_name()
+    elif component == "quarter": df[new_name] = df[date_col].dt.quarter
+    return df
+
+def pivot_transform(df: pd.DataFrame, index: List[str], columns: str, values: str, aggfunc: str = "sum"):
+    df = df.copy()
+    aggfunc_map = {"sum":"sum", "mean":"mean", "count":"count", "min":"min", "max":"max"}
+    if aggfunc not in aggfunc_map: aggfunc = "sum"
+    res = df.pivot_table(index=index, columns=columns, values=values, aggfunc=aggfunc_map[aggfunc]).reset_index()
+    res.columns = [f"{a}" if not isinstance(a, tuple) else "_".join([str(x) for x in a if x is not None]) for a in res.columns]
+    return res
+
+def unpivot_transform(df: pd.DataFrame, id_vars: List[str], value_vars: List[str], var_name="variable", value_name="value"):
+    df = df.copy()
+    res = df.melt(id_vars=id_vars, value_vars=value_vars, var_name=var_name, value_name=value_name)
+    return res
+
+def merge_datasets(left: pd.DataFrame, right: pd.DataFrame, left_on: List[str], right_on: List[str], how="left"):
+    return pd.merge(left, right, left_on=left_on, right_on=right_on, how=how)
+
+# ---------------------------
+# Visual Studio builder
+# ---------------------------
+def build_chart(chart_type: str, df: pd.DataFrame, x: str=None, y: str=None, color: str=None,
+                agg: Optional[str]=None, theme: str='plotly', show_labels: bool=True,
+                height: int=500, size: Optional[str]=None):
+    plot_df = df.copy()
+    if agg and x and y and chart_type in ("Barras","Linha","Pizza"):
+        if color: plot_df = plot_df.groupby([x, color])[y].agg(agg).reset_index()
+        else: plot_df = plot_df.groupby(x)[y].agg(agg).reset_index()
+    
+    if chart_type == "Barras":
+        fig = px.bar(plot_df, x=x, y=y, color=color, text_auto=show_labels, template=theme)
+    elif chart_type == "Linha":
+        fig = px.line(plot_df, x=x, y=y, color=color, markers=True, template=theme)
+    elif chart_type == "Pizza":
+        fig = px.pie(plot_df, names=x, values=y, template=theme)
+    elif chart_type == "Dispersão":
+        fig = px.scatter(plot_df, x=x, y=y, color=color, size=size, template=theme)
+    elif chart_type == "Histograma":
+        fig = px.histogram(plot_df, x=x, color=color, nbins=30, template=theme, text_auto=show_labels)
+    elif chart_type == "Box":
+        fig = px.box(plot_df, x=x, y=y, color=color, template=theme)
+    elif chart_type == "Heatmap":
+        corr = df.select_dtypes(include=np.number).corr()
+        fig = px.imshow(corr, text_auto=True, template=theme, title="Matriz de Correlação")
+    else:
+        fig = go.Figure()
+    
+    fig.update_layout(height=height, title=f"{chart_type} - {y} vs {x}" if y and x else chart_type)
+    return fig
+
+# ---------------------------
+# App Layout & Tabs
+# ---------------------------
+st.markdown("""
+<style>
+    .block-container {padding-top:1rem;}
+    .metric-box{background:#f3f6fb;border-left:6px solid #4F8BF9;padding:12px;border-radius:6px;margin-bottom:8px}
+    .metric-box h3{margin:0;color:#444;font-size:13px}
+    .metric-box h2{margin:4px 0 0 0;font-size:20px}
+    @media (prefers-color-scheme: dark){
+        .metric-box{background:#262730;color:#ddd;border-left:6px solid #ffbd45}
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def sidebar_load():
+    st.sidebar.header("📂 Conectar Dados")
+    uploaded = st.sidebar.file_uploader("Arraste CSV/Excel", type=['csv','xlsx'])
+    use_local = st.sidebar.checkbox("Usar caminho local (dev)", value=False)
+    
+    if st.sidebar.button("🔄 Resetar Sessão"):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+    return uploaded, use_local
+
+# Session State Init
+if 'df_raw' not in st.session_state: st.session_state['df_raw'] = pd.DataFrame()
+if 'df_main' not in st.session_state: st.session_state['df_main'] = pd.DataFrame()
+if 'report_charts' not in st.session_state: st.session_state['report_charts'] = []
+if 'presets' not in st.session_state: st.session_state['presets'] = {}
+
 def main():
-    set_theme()
-    
-    # --- SIDEBAR ---
-    st.sidebar.markdown("""
-    <div style="background-color:#00CC96; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 20px;">
-        <h3 style="color:white; margin:0; font-weight:bold;">Enterprise Ultra</h3>
-        <p style="color:#EEE; font-size:0.8rem;">Analytics v21.0</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    uploaded_file = st.sidebar.file_uploader("📂 Carregar Dataset", type=["csv", "xlsx"])
-    
-    if not uploaded_file:
-        st.title("Enterprise Analytics Ultra")
-        st.markdown("""
-        ### A Ferramenta Definitiva.
-        
-        **Módulos Premium:**
-        * **🔍 Column Explorer:** Raio-X completo de variáveis com Insights Automáticos.
-        * **🔮 Forecast Pro:** Previsão de Séries Temporais com Auto-ARIMA e Intervalo de Confiança.
-        * **🤖 AutoML Pro:** Seleção automática de features e modelos Gradient Boosting.
-        * **💾 SQL Premium:** Histórico de queries e ambiente SQL completo.
-        
-        👈 **Carregue um arquivo para começar.**
-        """)
+    uploaded, use_local = sidebar_load()
+    st.title("Enterprise Analytics — BI Edition")
+    st.caption("Foco: EDA, Visualização e Dashboard builder sem código")
+
+    # Load Logic
+    if uploaded is None and use_local:
+        try:
+            df = safe_read(UPLOADED_FILE_PATH)
+            df = clean_colnames(df)
+            st.session_state['df_raw'] = df.copy()
+            st.session_state['df_main'] = df.copy()
+            st.success("Dados carregados do caminho local.")
+        except Exception as e:
+            st.sidebar.error(f"Erro local: {e}")
+    elif uploaded is not None:
+        try:
+            df = safe_read(uploaded)
+            df = clean_colnames(df)
+            st.session_state['df_raw'] = df.copy()
+            st.session_state['df_main'] = df.copy()
+            st.success(f"Arquivo '{getattr(uploaded,'name', 'uploaded')}' carregado.")
+        except Exception as e:
+            st.sidebar.error(f"Erro leitura: {e}")
+
+    if st.session_state['df_main'].empty:
+        st.markdown("### Carregue um arquivo CSV ou Excel na barra lateral para começar.")
         return
 
-    de = DataEngine()
-    if 'df_raw' not in st.session_state or st.session_state.get('fname') != uploaded_file.name:
-        df = de.load_data(uploaded_file)
-        if df is not None:
-            st.session_state['df_raw'] = df
-            st.session_state['df_work'] = df.copy()
-            st.session_state['fname'] = uploaded_file.name
-            st.session_state['sql_history'] = []
-            st.toast("Dataset carregado com sucesso!", icon="✅")
-    
-    df_full = st.session_state['df_work']
-    
-    # Filtros Globais
-    st.sidebar.header("🔍 Filtros Globais")
-    date_cols = df_full.select_dtypes(include=['datetime', 'datetimetz']).columns.tolist()
-    if not date_cols:
-        for c in df_full.select_dtypes(include='object').columns:
-            if 'date' in c.lower() or 'data' in c.lower():
-                try:
-                    df_full[c] = pd.to_datetime(df_full[c])
-                    date_cols.append(c)
-                except: pass
-                
-    if date_cols:
-        dt_col = st.sidebar.selectbox("Data:", ["Nenhum"] + date_cols)
-        if dt_col != "Nenhum":
-            min_d, max_d = df_full[dt_col].min(), df_full[dt_col].max()
-            d_range = st.sidebar.date_input("Período:", [min_d, max_d])
-            if len(d_range) == 2:
-                df_full = df_full[(df_full[dt_col].dt.date >= d_range[0]) & (df_full[dt_col].dt.date <= d_range[1])]
+    menu = st.radio("", ["Data Quality", "Data Studio", "Visual Studio", "Relatório/Dashboard", "Exportar"], horizontal=True, index=0)
+    df = st.session_state['df_main']
 
-    st.sidebar.markdown("---")
-    
-    menu = st.sidebar.radio("Navegação:", [
-        "📊 Dashboard & Explorer", 
-        "💾 SQL Lab Premium",
-        "🛠️ Engenharia de Dados",
-        "🤖 AutoML Pro",
-        "🔮 Time Series Forecast",
-        "🧠 NLP (Texto)",
-        "🌀 Clustering",
-        "📤 Relatórios & Export"
-    ])
+    # ---- Data Quality ----
+    if menu == "Data Quality":
+        st.header("🔍 Data Quality & EDA")
+        c1,c2,c3,c4 = st.columns(4)
+        c1.markdown(f"<div class='metric-box'><h3>Linhas</h3><h2>{format_number(df.shape[0])}</h2></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='metric-box'><h3>Colunas</h3><h2>{df.shape[1]}</h2></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='metric-box'><h3>Nulos</h3><h2>{format_number(int(df.isna().sum().sum()))}</h2></div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='metric-box'><h3>Duplicatas</h3><h2>{format_number(int(df.duplicated().sum()))}</h2></div>", unsafe_allow_html=True)
 
-    # --- 1. DASHBOARD & EXPLORER PREMIUM ---
-    if menu == "📊 Dashboard & Explorer":
-        st.title("Visão Executiva & Exploratória")
-        
-        # KPIs
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: st.markdown(f"""<div class="metric-card"><h3>Registros</h3><h2>{len(df_full):,}</h2></div>""", unsafe_allow_html=True)
-        with c2: st.markdown(f"""<div class="metric-card"><h3>Variáveis</h3><h2>{df_full.shape[1]}</h2></div>""", unsafe_allow_html=True)
-        with c3: st.markdown(f"""<div class="metric-card"><h3>Nulos</h3><h2>{df_full.isna().sum().sum()}</h2></div>""", unsafe_allow_html=True)
-        with c4: st.markdown(f"""<div class="metric-card"><h3>Duplicatas</h3><h2>{df_full.duplicated().sum()}</h2></div>""", unsafe_allow_html=True)
-        
         st.markdown("---")
-        
-        # COLUMN EXPLORER PREMIUM
-        st.subheader("🔍 Column Explorer Premium")
-        
-        col_exp = st.selectbox("Selecione uma Coluna para Raio-X:", df_full.columns)
-        
-        # Auto Insights
-        ie = InsightsEngine()
-        insights = ie.generate_column_insights(df_full, col_exp)
-        
-        if insights:
-            st.markdown('<div class="insight-box"><div class="insight-title">💡 Auto Insights</div>', unsafe_allow_html=True)
-            for msg in insights:
-                st.markdown(f"- {msg}")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        c_l, c_r = st.columns([2, 1])
-        with c_l:
-            if pd.api.types.is_numeric_dtype(df_full[col_exp]):
-                fig = px.histogram(df_full, x=col_exp, marginal="box", title=f"Distribuição: {col_exp}", template="plotly_dark")
-                fig.update_traces(marker_color="#00CC96")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # QQ Plot
-                try:
-                    qq_x = stats.probplot(df_full[col_exp].dropna(), dist="norm")[0][0]
-                    qq_y = stats.probplot(df_full[col_exp].dropna(), dist="norm")[0][1]
-                    qq_fig = px.scatter(x=qq_x, y=qq_y, labels={'x':'Teórico', 'y':'Real'}, title="QQ-Plot (Normalidade)", template="plotly_dark")
-                    st.plotly_chart(qq_fig, use_container_width=True)
-                except: pass
+        st.subheader("Mapa de Missing")
+        st.plotly_chart(missing_heatmap(df), width="stretch")
+
+        st.subheader("Perfil das Colunas")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.caption("Numéricas")
+            num = df.select_dtypes(include=np.number)
+            if not num.empty:
+                st.dataframe(num.describe().T[['mean','std','min','max']], width="stretch")
+                col_sel = st.selectbox("Detectar outliers (IQR) em:", num.columns.tolist())
+                out_df = detect_outliers_iqr(df, col_sel)
+                st.write(f"Outliers detectados: {len(out_df)}")
+                if st.checkbox("Mostrar outliers sample"):
+                    st.dataframe(out_df.head(50), width="stretch")
             else:
-                top = df_full[col_exp].value_counts().head(10).reset_index()
-                top.columns = [col_exp, 'Contagem']
-                fig = px.bar(top, x='Contagem', y=col_exp, orientation='h', title=f"Top 10: {col_exp}", template="plotly_dark")
-                fig.update_traces(marker_color="#00CC96")
-                st.plotly_chart(fig, use_container_width=True)
-                
-        with c_r:
-            st.markdown("##### Estatísticas Detalhadas")
-            st.dataframe(df_full[col_exp].describe(), use_container_width=True)
+                st.info("Sem colunas numéricas.")
 
-    # --- 2. SQL LAB PREMIUM ---
-    elif menu == "💾 SQL Lab Premium":
-        st.header("SQL Playground Pro")
-        
-        c_sql, c_res = st.columns([1, 2])
-        with c_sql:
-            query = st.text_area("Query (Tabela: 'dados'):", "SELECT * FROM dados LIMIT 10", height=150)
-            if st.button("Executar Query"):
-                res, err = de.run_query(df_full, query)
-                if err: st.error(f"Erro: {err}")
-                else: 
-                    st.session_state['sql_res'] = res
-                    if 'sql_history' not in st.session_state: st.session_state['sql_history'] = []
-                    st.session_state['sql_history'].append(query)
-            
-            if 'sql_history' in st.session_state and st.session_state['sql_history']:
-                with st.expander("Histórico de Queries"):
-                    for q in reversed(st.session_state['sql_history'][-5:]):
-                        st.code(q, language='sql')
-
-        with c_res:
-            if 'sql_res' in st.session_state:
-                st.success(f"{len(st.session_state['sql_res'])} linhas retornadas.")
-                st.dataframe(st.session_state['sql_res'], use_container_width=True)
-                csv_sql = st.session_state['sql_res'].to_csv(index=False).encode('utf-8')
-                st.download_button("Baixar Resultado (CSV)", csv_sql, "sql_result.csv", "text/csv")
+        with col2:
+            st.caption("Categóricas")
+            cat = df.select_dtypes(include='object')
+            if not cat.empty:
+                stats_cat = pd.DataFrame({"unique": cat.nunique(), "missing": cat.isna().sum(), "% missing": (cat.isna().mean()*100).round(2)})
+                st.dataframe(stats_cat, width="stretch")
             else:
-                st.info("Execute uma query para ver os resultados.")
+                st.info("Sem colunas de texto.")
 
-    # --- 3. ENGENHARIA ---
-    elif menu == "🛠️ Engenharia de Dados":
-        st.header("Engenharia de Dados")
-        t1, t2, t3 = st.tabs(["Estrutura", "Limpeza", "Encoding"])
+        with col3:
+            st.caption("Datas")
+            date_cols = [c for c in df.columns if np.issubdtype(df[c].dtype, np.datetime64)]
+            if date_cols:
+                for dc in date_cols:
+                    st.write(f"**{dc}**: {df[dc].min()} -> {df[dc].max()}")
+            else:
+                st.info("Sem colunas de data.")
+
+    # ---- Data Studio ----
+    elif menu == "Data Studio":
+        st.header("🛠 Data Studio")
+        tabs = st.tabs(["Criar Colunas", "Renomear/Converter", "Pivot/Merge", "Filtros"])
         
-        with t1:
-            c1, c2 = st.columns(2)
-            with c1:
-                ren = st.selectbox("Renomear:", df_full.columns)
-                new_n = st.text_input("Novo nome:", value=ren)
-                if st.button("Renomear"):
-                    df_full.rename(columns={ren: new_n}, inplace=True)
-                    st.session_state['df_work'] = df_full
-                    st.rerun()
-            with c2:
-                typ = st.selectbox("Converter Tipo:", df_full.columns)
-                to_t = st.selectbox("Para:", ["Numérico", "Texto", "Data"])
-                if st.button("Converter"):
+        with tabs[0]:
+            op = st.selectbox("Operação", ["Aritmética", "Condicional (IF)", "Extrair Data", "Split Texto"])
+            if op == "Aritmética":
+                lc = st.selectbox("Col A", df.select_dtypes(include=np.number).columns.tolist(), key="csa")
+                md = st.radio("Col B", ["Coluna","Valor Fixo"])
+                rc = st.selectbox("Col B", df.select_dtypes(include=np.number).columns.tolist(), key="csb") if md=="Coluna" else None
+                bv = st.number_input("Valor", 1.0) if md=="Valor Fixo" else None
+                sy = st.selectbox("Op", ["+","-","*","/"])
+                nm = st.text_input("Nome nova col", f"{lc}_{sy}_res")
+                if st.button("Criar"):
                     try:
-                        if to_t=="Numérico": df_full[typ] = pd.to_numeric(df_full[typ], errors='coerce')
-                        elif to_t=="Data": df_full[typ] = pd.to_datetime(df_full[typ], errors='coerce')
-                        else: df_full[typ] = df_full[typ].astype(str)
-                        st.session_state['df_work'] = df_full
-                        st.rerun()
-                    except: st.error("Falha na conversão.")
-        
-        with t2:
-            if st.button("Remover Duplicatas"):
-                df_full.drop_duplicates(inplace=True)
-                st.session_state['df_work'] = df_full
-                st.rerun()
+                        st.session_state['df_main'] = create_column_arithmetic(df, nm, lc, rc, sy, bv)
+                        st.success("Criado.")
+                    except Exception as e: st.error(e)
             
-            c_null = st.selectbox("Tratar Nulos:", df_full.columns)
-            met = st.selectbox("Método:", ["Drop", "Média", "Zero"])
-            if st.button("Aplicar"):
-                if met=="Drop": df_full.dropna(subset=[c_null], inplace=True)
-                elif met=="Média": df_full[c_null].fillna(df_full[c_null].mean(), inplace=True)
-                else: df_full[c_null].fillna(0, inplace=True)
-                st.session_state['df_work'] = df_full
-                st.rerun()
-
-        with t3:
-            c_dum = st.selectbox("One-Hot (Dummies):", df_full.select_dtypes(include='object').columns)
-            if st.button("Criar Dummies"):
-                df_full = pd.get_dummies(df_full, columns=[c_dum], drop_first=True, dtype=int)
-                st.session_state['df_work'] = df_full
-                st.rerun()
-
-    # --- 4. AUTOML PRO ---
-    elif menu == "🤖 AutoML Pro":
-        st.header("AutoML Pipeline")
-        automl = AutoMLEngine()
-        
-        tgt = st.selectbox("Target:", df_full.columns)
-        fts = st.multiselect("Features:", [c for c in df_full.columns if c!=tgt])
-        
-        use_fs = st.checkbox("Feature Selection Automático (SelectKBest)")
-        
-        if st.button("Treinar Modelo") and fts:
-            is_reg = pd.api.types.is_numeric_dtype(df_full[tgt]) and df_full[tgt].nunique() > 20
-            algo = st.selectbox("Algoritmo:", ["Random Forest", "Hist Gradient Boosting (LightGBM)"])
+            elif op == "Condicional (IF)":
+                nc = st.selectbox("Col Alvo", df.select_dtypes(include=np.number).columns.tolist())
+                opr = st.selectbox("Op", [">","<",">=","<=","==","!="])
+                th = st.number_input("Threshold", 0.0)
+                tl, fl = st.text_input("True Label", "High"), st.text_input("False Label", "Low")
+                nm = st.text_input("Nome", "cat_if")
+                if st.button("Criar IF"):
+                    st.session_state['df_main'] = create_column_if(df, nm, nc, opr, th, tl, fl)
+                    st.success("Criado.")
             
-            with st.spinner("Treinando Pipeline..."):
-                mod, Xt, yt, pred, imp = automl.train(df_full, tgt, fts, algo, is_reg, use_fs)
-                
-                c1, c2 = st.columns(2)
-                if is_reg:
-                    c1.metric("R2 Score", f"{r2_score(yt, pred):.4f}")
-                    c2.metric("MAE", f"{mean_absolute_error(yt, pred):.4f}")
-                    st.plotly_chart(px.scatter(x=yt, y=pred, title="Real vs Previsto", template="plotly_dark"))
-                else:
-                    c1.metric("Acurácia", f"{accuracy_score(yt, pred):.2%}")
-                    st.plotly_chart(px.imshow(confusion_matrix(yt, pred), text_auto=True, template="plotly_dark"))
-                
-                if imp is not None:
-                    st.subheader("Feature Importance")
-                    st.bar_chart(imp.set_index('Feature'))
-                
-                bio = BytesIO()
-                joblib.dump(mod, bio)
-                st.download_button("Baixar Modelo (.joblib)", bio.getvalue(), "modelo.joblib")
+            elif op == "Extrair Data":
+                dc = st.selectbox("Data Col", [c for c in df.columns if np.issubdtype(df[c].dtype, np.datetime64)])
+                cp = st.selectbox("Componente", ["year","month","day","weekday"])
+                nm = st.text_input("Nome", f"{dc}_{cp}")
+                if st.button("Extrair") and dc:
+                    st.session_state['df_main'] = extract_date_component(df, dc, cp, nm)
+                    st.success("Extraído.")
+            
+            elif op == "Split Texto":
+                tc = st.selectbox("Texto Col", df.select_dtypes(include='object').columns.tolist())
+                sp = st.text_input("Separador", " ")
+                pt = st.number_input("Index Parte", 0, step=1)
+                nm = st.text_input("Nome", f"{tc}_split")
+                if st.button("Split") and tc:
+                    try:
+                        s = df[tc].astype(str).str.split(sp, expand=True)
+                        if pt < s.shape[1]:
+                            df[nm] = s[pt]
+                            st.session_state['df_main'] = df
+                            st.success("Split OK.")
+                        else: st.error("Index fora do range.")
+                    except Exception as e: st.error(e)
 
-    # --- 5. TIME SERIES FORECAST PRO ---
-    elif menu == "🔮 Time Series Forecast":
-        st.header("Forecast Pro (Auto-ARIMA)")
-        ts_eng = TimeSeriesEngine()
+        with tabs[1]:
+            c = st.selectbox("Col", df.columns, key="ren")
+            nn = st.text_input("Novo nome")
+            if st.button("Renomear") and nn:
+                df.rename(columns={c:nn}, inplace=True)
+                st.session_state['df_main'] = df
+                st.success("Renomeado.")
+            st.markdown("---")
+            cc = st.selectbox("Col", df.columns, key="conv")
+            to = st.selectbox("Para", ["Data","Num","Texto"])
+            if st.button("Converter"):
+                try:
+                    if to=="Data": df[cc] = pd.to_datetime(df[cc], errors='coerce')
+                    elif to=="Num": df[cc] = pd.to_numeric(df[cc], errors='coerce')
+                    else: df[cc] = df[cc].astype(str)
+                    st.session_state['df_main'] = df
+                    st.success("Convertido.")
+                except Exception as e: st.error(e)
+
+        with tabs[2]:
+            mode = st.radio("Modo", ["Pivot","Unpivot","Merge"])
+            if mode=="Pivot":
+                idx = st.multiselect("Index", df.columns)
+                col = st.selectbox("Columns", df.columns)
+                val = st.selectbox("Values", df.select_dtypes(include=np.number).columns)
+                af = st.selectbox("Agg", ["sum","mean","count"])
+                if st.button("Pivotar"):
+                    st.session_state['df_main'] = pivot_transform(df, idx, col, val, af)
+                    st.success("Pivotado.")
+            elif mode=="Unpivot":
+                ids = st.multiselect("Ids", df.columns)
+                vals = st.multiselect("Vals", df.columns)
+                if st.button("Unpivot"):
+                    st.session_state['df_main'] = unpivot_transform(df, ids, vals)
+                    st.success("Unpivotado.")
+            elif mode=="Merge":
+                uf = st.file_uploader("Arquivo 2", key="mg")
+                if uf:
+                    r = safe_read(uf)
+                    r = clean_colnames(r)
+                    lo = st.multiselect("Left Keys", df.columns)
+                    ro = st.multiselect("Right Keys", r.columns)
+                    if st.button("Merge") and lo and ro:
+                        st.session_state['df_main'] = merge_datasets(df, r, lo, ro)
+                        st.success("Merge OK.")
+
+        with tabs[3]:
+            cf = st.selectbox("Filtro Col", df.columns)
+            if pd.api.types.is_numeric_dtype(df[cf]):
+                mn, mx = float(df[cf].min()), float(df[cf].max())
+                rn = st.slider("Range", mn, mx, (mn, mx))
+                if st.button("Filtrar Num"):
+                    st.session_state['df_main'] = df[(df[cf]>=rn[0]) & (df[cf]<=rn[1])]
+                    st.success("Filtrado.")
+            else:
+                sl = st.multiselect("Vals", df[cf].unique())
+                if st.button("Filtrar Cat") and sl:
+                    st.session_state['df_main'] = df[df[cf].isin(sl)]
+                    st.success("Filtrado.")
+            if st.button("Drop NA"):
+                st.session_state['df_main'] = df.dropna()
+                st.success("NAs removidos.")
+
+    # ---- Visual Studio ----
+    elif menu == "Visual Studio":
+        st.header("🎨 Visual Studio")
+        l, r = st.columns([1,2])
+        with l:
+            ct = st.selectbox("Tipo", ["Barras","Linha","Dispersão","Pizza","Histograma","Box","Heatmap"])
+            x = st.selectbox("X", df.columns)
+            y = st.selectbox("Y", df.select_dtypes(include=np.number).columns) if ct not in ("Pizza","Histograma","Heatmap") else None
+            clr = st.selectbox("Cor", ["Nenhum"]+df.columns.tolist())
+            clr = None if clr=="Nenhum" else clr
+            agg = st.selectbox("Agg", ["sum","mean","count"]) if ct in ("Barras","Linha","Pizza") else None
+            th = st.selectbox("Tema", ["plotly","plotly_dark","ggplot2"])
+            sl = st.checkbox("Labels", True)
+            tt = st.text_input("Titulo", f"{ct}")
+            
+            if st.button("Gerar"):
+                try:
+                    fig = build_chart(ct, df, x, y, clr, agg, th, sl)
+                    st.session_state['last_fig'] = fig
+                    st.session_state['last_meta'] = {"title":tt, "type":ct}
+                    st.success("Gerado.")
+                except Exception as e: st.error(e)
+
+        with r:
+            if 'last_fig' in st.session_state:
+                st.plotly_chart(st.session_state['last_fig'], width="stretch")
+                nt = st.text_area("Nota")
+                if st.button("Add ao Relatório"):
+                    st.session_state['report_charts'].append({"fig":st.session_state['last_fig'], "title":st.session_state['last_meta']['title'], "type":st.session_state['last_meta']['type'], "note":nt})
+                    st.success("Adicionado.")
+
+    # ---- Dashboard ----
+    elif menu == "Relatório/Dashboard":
+        st.header("📑 Relatório")
+        cs = st.session_state['report_charts']
+        if st.button("Limpar"):
+            st.session_state['report_charts'] = []
+            st.rerun()
         
-        c_dt = st.selectbox("Data:", df_full.columns)
-        c_val = st.selectbox("Valor:", df_full.select_dtypes(include=np.number).columns)
-        hz = st.slider("Horizonte (Dias):", 7, 60, 30)
+        if not cs: st.info("Vazio.")
+        for i, c in enumerate(cs):
+            st.markdown("---")
+            c1, c2 = st.columns([3,1])
+            with c1: st.plotly_chart(c['fig'], width="stretch")
+            with c2:
+                st.write(f"**{c['title']}**")
+                if c.get('note'): st.info(c['note'])
+                if st.button(f"X ##{i}"):
+                    st.session_state['report_charts'].pop(i)
+                    st.rerun()
+
+    # ---- Export ----
+    elif menu == "Exportar":
+        st.header("📤 Exportar")
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("CSV", csv, "data.csv", "text/csv")
         
-        if st.button("Gerar Previsão"):
-            try:
-                with st.spinner("Otimizando modelo ARIMA..."):
-                    ts, pred, conf, order = ts_eng.auto_forecast(df_full, c_dt, c_val, hz)
-                
-                if ts is not None:
-                    st.success(f"Melhor Modelo: ARIMA{order}")
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=ts.index, y=ts.values, name="Histórico"))
-                    fig.add_trace(go.Scatter(x=pred.index, y=pred.values, name="Previsão", line=dict(color='red')))
-                    fig.add_trace(go.Scatter(x=conf.index, y=conf.iloc[:,0], showlegend=False, line=dict(width=0)))
-                    fig.add_trace(go.Scatter(x=conf.index, y=conf.iloc[:,1], name="Intervalo Confiança", fill='tonexty', line=dict(width=0), fillcolor='rgba(255,0,0,0.2)'))
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.error("Falha na convergência do modelo ARIMA.")
-            except Exception as e: st.error(f"Erro: {e}")
+        kpis = {"rows":len(df), "cols":df.shape[1], "nulls":int(df.isna().sum().sum()), "dups":int(df.duplicated().sum())}
+        if st.button("PDF Relatório"):
+            b = generate_pdf_report(df, st.session_state['report_charts'], kpis)
+            st.download_button("PDF", b, "rep.pdf", "application/pdf")
 
-    # --- 6. NLP ---
-    elif menu == "🧠 NLP (Texto)":
-        st.header("Text Analytics")
-        c_txt = st.selectbox("Texto:", df_full.select_dtypes(include='object').columns)
-        if st.button("Analisar"):
-            vec = TfidfVectorizer(stop_words='english', max_features=20)
-            X = vec.fit_transform(df_full[c_txt].astype(str))
-            words = dict(zip(vec.get_feature_names_out(), X.sum(axis=0).tolist()[0]))
-            st.bar_chart(pd.Series(words).sort_values(ascending=False))
-
-    # --- 7. CLUSTERING ---
-    elif menu == "🌀 Clustering":
-        st.header("Clusterização")
-        fs = st.multiselect("Features:", df_full.select_dtypes(include=np.number).columns)
-        k = st.slider("K:", 2, 10, 3)
-        if st.button("Executar") and fs:
-            X = StandardScaler().fit_transform(df_full[fs].dropna())
-            cl = KMeans(n_clusters=k).fit_predict(X)
-            pca = PCA(2).fit_transform(X)
-            fig = px.scatter(x=pca[:,0], y=pca[:,1], color=cl.astype(str), title="PCA Clusters", template="plotly_dark")
-            st.plotly_chart(fig)
-
-    # --- 8. EXPORT ---
-    elif menu == "📤 Relatórios & Export":
-        st.header("Exportação")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.download_button("Baixar CSV", df_full.to_csv(index=False).encode('utf-8'), "dados.csv", "text/csv")
-        with c2:
-            if st.button("Gerar PDF Executivo"):
-                kpis = {"rows": len(df_full), "cols": df_full.shape[1], "nulls": df_full.isna().sum().sum(), "dups": df_full.duplicated().sum()}
-                pdf = generate_pdf_report(df_full, kpis)
-                st.download_button("Baixar PDF", pdf, "report.pdf", "application/pdf")
+    st.session_state['df_main'] = st.session_state.get('df_main', df)
 
 if __name__ == "__main__":
     main()
