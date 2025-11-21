@@ -1,16 +1,3 @@
-"""
-Enterprise Analytics — Code-First Edition (v13.0)
-Author: Gemini Advanced
-Version: 13.0 (Python Studio, Seaborn, Advanced SQL, Massive Academy)
-
-Destaques v13.0:
-- CORE: Substituição de ETL/Viz visuais por "Python Studio" (Terminal com Snippets).
-- LIB: Adição de Seaborn e Matplotlib nativos.
-- EDU: Academy expandido para formato "E-book Completo".
-- DATA: Gerador de Dados Avançado (Customizável coluna a coluna).
-- SQL: Cheat Sheet Definitiva (Window Functions, CTEs).
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,637 +6,367 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
-import logging
-import re
-import time
-import pickle
-import yaml
-import hashlib
-import json
-import random
-import unicodedata
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any, Tuple
-
-# --- Scientific Stack ---
-from scipy import stats
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, RobustScaler
+from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import accuracy_score, r2_score
+from sklearn.preprocessing import LabelEncoder
 
-# Optional Libs
-try:
-    from xgboost import XGBRegressor, XGBClassifier
-    _HAS_XGB = True
-except ImportError:
-    _HAS_XGB = False
-
-try:
-    import duckdb
-    _HAS_DUCKDB = True
-except ImportError:
-    _HAS_DUCKDB = False
-
-# PDF Support
-from fpdf import FPDF
-from fpdf.enums import XPos, YPos
-
-# ---------------------------
-# CONFIG & STYLES
-# ---------------------------
+# Configuração da Página
 st.set_page_config(
-    page_title="Data Studio Code-First", 
-    layout="wide", 
-    page_icon="🐍", 
+    page_title="DS Master Toolbox v14",
+    layout="wide",
+    page_icon="🧠",
     initial_sidebar_state="expanded"
 )
 
+# Estilos CSS Personalizados
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    code { font-family: 'Fira Code', monospace; }
-    
-    /* Academy Styles */
-    .academy-header { color: #2563eb; font-size: 1.5rem; font-weight: 800; margin-top: 20px; }
-    .academy-text { font-size: 1rem; line-height: 1.6; color: #334155; text-align: justify; }
-    
-    /* Python Editor Style */
-    .stTextArea textarea {
-        font-family: 'Fira Code', monospace !important;
-        background-color: #0e1117 !important;
-        color: #e6edf3 !important;
-    }
-    
-    /* Cheat Sheet Box */
-    .cheat-box {
-        background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 10px;
-    }
-    .cheat-title { font-weight: bold; color: #0f172a; font-size: 0.9rem; }
-    .cheat-desc { font-size: 0.8rem; color: #64748b; }
-
-    /* Dark Mode */
-    @media (prefers-color-scheme: dark) {
-        .academy-text { color: #cbd5e1; }
-        .cheat-box { background: #1e293b; border-color: #334155; }
-        .cheat-title { color: #f8fafc; }
-        .cheat-desc { color: #94a3b8; }
-    }
+    .main-header { font-size: 2rem; font-weight: bold; color: #4F8BF9; }
+    .tutorial-box { background-color: #e0f2fe; padding: 15px; border-radius: 10px; border-left: 5px solid #0284c7; margin-bottom: 20px; color: #0c4a6e; }
+    .stTextArea textarea { font-family: 'Fira Code', monospace; background-color: #1e293b; color: #e2e8f0; }
+    .success-box { padding: 10px; background-color: #dcfce7; color: #166534; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------
-# SESSION INIT
+# 1. GESTÃO DE ESTADO (SESSION STATE)
 # ---------------------------
 def init_session():
     defaults = {
-        'df': pd.DataFrame(), 
-        'df_raw': pd.DataFrame(),
-        'report_charts': [], 
-        'model_registry': [], 
-        'last_file_uid': None,
-        'code_snippet': "import pandas as pd\nimport seaborn as sns\nimport matplotlib.pyplot as plt\n\n# O DataFrame está disponível como 'df'\n# Exemplo: Ver as primeiras linhas\nst.write(df.head())",
-        'gen_config': [] # List of columns to generate
+        'df': pd.DataFrame(),
+        'df_name': "Nenhum",
+        'tutorial_active': False,
+        'tutorial_step': 0,
+        'code_snippet': "import pandas as pd\nimport matplotlib.pyplot as plt\n\n# 'df' é seu dataframe atual.\n# Tente: st.write(df.describe())",
+        'report_items': []
     }
     for k, v in defaults.items():
-        if k not in st.session_state: st.session_state[k] = v
+        if k not in st.session_state:
+            st.session_state[k] = v
 
 init_session()
 
 # ---------------------------
-# UTILITIES
+# 2. MÓDULO ACADEMY (Baseado no Repo ds-cheatsheets)
 # ---------------------------
-@st.cache_data(show_spinner=False)
-def load_data(file) -> pd.DataFrame:
-    try:
-        if file.name.endswith('.csv'): return pd.read_csv(file, encoding_errors='ignore')
-        return pd.read_excel(file)
-    except Exception as e: st.error(f"Erro leitura: {str(e)}"); return pd.DataFrame()
+def render_academy():
+    st.markdown("<h1 class='main-header'>🎓 Academy: O Grande E-Book de Dados</h1>", unsafe_allow_html=True)
+    st.write("Base de conhecimento integrada inspirada no repositório *FavioVazquez/ds-cheatsheets*.")
 
-def clean_colnames(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = (df.columns.astype(str).str.strip().str.replace(r"\s+", "_", regex=True).str.replace(r"[^0-9a-zA-Z_]", "", regex=True).str.lower())
-    return df
+    # Organização baseada nas pastas do repositório
+    tabs = st.tabs(["🐍 Python", "🗄️ SQL", "🤖 Machine Learning", "🧠 Deep Learning", "📊 Data Viz", "🧮 Math & Stats"])
+
+    with tabs[0]: # Python
+        st.subheader("Python para Data Science")
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            topic = st.radio("Tópico Python", ["Pandas Basics", "Numpy", "Limpeza de Dados"])
+        with col2:
+            if topic == "Pandas Basics":
+                st.info("🐼 **Pandas** é a excel do Python.")
+                st.code("""
+import pandas as pd
+df = pd.read_csv('dados.csv')
+df.head()          # Primeiras linhas
+df.info()          # Tipos de dados e nulos
+df.describe()      # Estatísticas básicas
+df['col'].value_counts() # Contagem de categorias
+                """, language='python')
+            elif topic == "Numpy":
+                st.info("🔢 **Numpy** é a base matemática vetorial.")
+                st.code("""
+import numpy as np
+arr = np.array([1, 2, 3])
+np.mean(arr)       # Média
+np.std(arr)        # Desvio Padrão
+                """, language='python')
+
+    with tabs[1]: # SQL
+        st.subheader("Structured Query Language")
+        st.warning("Dica: Use o **SQL Studio** no menu para testar esses comandos no seu DataFrame!")
+        with st.expander("🔍 SELECT & FILTER (O Básico)"):
+            st.markdown("""
+            * **Selecionar tudo:** `SELECT * FROM df`
+            * **Filtrar:** `SELECT * FROM df WHERE idade > 18`
+            * **Texto:** `SELECT * FROM df WHERE nome LIKE 'A%'` (Começa com A)
+            """)
+        with st.expander("🔗 JOINS (Juntando Tabelas)"):
+            st.image("https://upload.wikimedia.org/wikipedia/commons/9/9d/SQL_Joins.svg", caption="Visualização de Joins", width=400)
+            st.markdown("""
+            * **INNER JOIN**: Apenas o que tem nos dois.
+            * **LEFT JOIN**: Tudo da esquerda, e o que der match na direita.
+            """)
+
+    with tabs[2]: # Machine Learning
+        st.subheader("Machine Learning (Scikit-Learn)")
+        st.markdown("Conceitos fundamentais baseados nos cheat sheets de ML.")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### 🚦 Supervised Learning")
+            st.write("Quando você tem o alvo (target) para treinar.")
+            st.markdown("- **Regressão**: Prever número (Preço, Temperatura). *Ex: Linear Regression*")
+            st.markdown("- **Classificação**: Prever categoria (Sim/Não, A/B/C). *Ex: Random Forest, Logistic Regression*")
+        with c2:
+            st.markdown("### 🕵️ Unsupervised Learning")
+            st.write("Quando você NÃO tem alvo, quer achar padrões.")
+            st.markdown("- **Clustering**: Agrupar similares. *Ex: K-Means*")
+            st.markdown("- **Dimensionality Reduction**: Simplificar dados. *Ex: PCA*")
+
+    with tabs[3]: # Deep Learning
+        st.subheader("Deep Learning & Redes Neurais")
+        st.markdown("Dicas rápidas de Keras e Arquiteturas.")
+        st.code("""
+# Exemplo Básico Keras (Pseudocódigo)
+model = Sequential()
+model.add(Dense(64, activation='relu', input_dim=20))
+model.add(Dense(1, activation='sigmoid')) # Para classificação binária
+model.compile(optimizer='adam', loss='binary_crossentropy')
+        """, language='python')
 
 # ---------------------------
-# DATA GENERATOR ENGINE (CUSTOMIZABLE)
+# 3. MÓDULO TUTORIAL (GAMIFICATION)
 # ---------------------------
-class DataGenerator:
-    @staticmethod
-    def generate_column(n_rows, config):
-        typ = config['type']
-        name = config['name']
-        
-        if typ == "Linear Trend":
-            noise = np.random.normal(0, config.get('noise', 10), n_rows)
-            base = np.linspace(0, 100, n_rows)
-            return base * config.get('slope', 1) + config.get('intercept', 0) + noise
-        
-        elif typ == "Sazonal (Senoide)":
-            x = np.linspace(0, 4 * np.pi, n_rows)
-            return config.get('amplitude', 10) * np.sin(x) + config.get('base', 50) + np.random.normal(0, 5, n_rows)
-        
-        elif typ == "Categorico":
-            cats = config.get('categories', ['A', 'B']).split(',')
-            return np.random.choice(cats, n_rows)
-        
-        elif typ == "Texto (NLP)":
-            pos = ["Excelente", "Bom", "Adorei", "Recomendo"]
-            neg = ["Ruim", "Péssimo", "Odiei", "Não recomendo"]
-            return np.random.choice(pos + neg, n_rows)
-        
-        elif typ == "Data":
-            return pd.date_range(start='2023-01-01', periods=n_rows, freq='D')
-            
-        return np.zeros(n_rows)
+def tutorial_manager():
+    if not st.session_state['tutorial_active']:
+        return
 
-# ---------------------------
-# PDF ENGINE
-# ---------------------------
-class EnterprisePDF(FPDF):
-    def header(self):
-        self.set_font('Helvetica', 'B', 10)
-        self.cell(0, 10, 'Code-First Analytics Report', 0, 1, 'R')
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Helvetica', 'I', 8)
-        self.cell(0, 10, f'Pag {self.page_no()}/{{nb}}', 0, 0, 'C')
-
-def generate_report_v13(df: pd.DataFrame, charts: List[dict], kpis: dict) -> bytes:
-    pdf = EnterprisePDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
+    steps = {
+        0: "Bem-vindo! Sua primeira missão é **Carregar um Dataset**. Vá para a aba '🏠 Home' e clique em 'Carregar Exemplo Titanic'.",
+        1: "Ótimo! Dados carregados. Agora, precisamos entender os dados. Vá para o **🐍 Python Studio**, cole `st.write(df.describe())` e execute.",
+        2: "Perfeito! Você viu as estatísticas. Agora vamos visualizar. Vá para o **🐍 Python Studio**, crie um histograma da idade: `fig = px.histogram(df, x='Age'); st.plotly_chart(fig)`.",
+        3: "Excelente! Agora vamos treinar um modelo simples. Vá para o **🤖 ML Studio**, escolha 'Survived' como Target e 'Age', 'Fare' como Features. Treine o modelo.",
+        4: "Parabéns! Você completou o ciclo básico de Data Science. 🏆"
+    }
     
-    pdf.set_font("Helvetica", "B", 24)
-    pdf.cell(0, 20, "Relatório Técnico", 0, 1, 'C')
-    pdf.ln(10)
+    current = st.session_state['tutorial_step']
     
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, "Resumo", 1, 1)
-    pdf.set_font("Helvetica", "", 12)
-    pdf.cell(0, 10, f"Linhas: {kpis['rows']} | Colunas: {kpis['cols']}", 0, 1)
-    pdf.cell(0, 10, f"Nulos: {kpis['nulls']} | Duplicatas: {kpis['dups']}", 0, 1)
-    pdf.ln(15)
-    
-    # Charts
-    for i, ch in enumerate(charts):
-        pdf.add_page()
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 10, ch['title'], 0, 1)
-        
-        if ch.get('type') == 'image_bytes':
-            # Handling raw bytes from matplotlib/seaborn
-            import tempfile, os
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                tmp.write(ch['data'])
-                path = tmp.name
-            try:
-                pdf.image(path, x=15, w=180)
-                os.unlink(path)
-            except:
-                pdf.cell(0, 10, "[Erro imagem]", 0, 1)
-        
-        pdf.ln(5)
-        if ch.get('note'):
-            pdf.set_font("Helvetica", "I", 10)
-            pdf.multi_cell(0, 5, f"Nota: {ch['note']}")
-            
-    return bytes(pdf.output())
+    st.markdown(f"""
+    <div class="tutorial-box">
+        <h3>🎓 Modo Tutorial: Nível {current + 1}/5</h3>
+        <p>{steps.get(current, "Tutorial Concluído!")}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Botão para avançar manualmente se o usuário travar (ou lógica automática)
+    if st.sidebar.button(">> Avançar Passo Tutorial"):
+        st.session_state['tutorial_step'] += 1
+        st.rerun()
 
 # ---------------------------
-# PAGES
+# 4. PÁGINAS DO APP
 # ---------------------------
 
 def page_home():
-    st.title("🏠 Home")
-    df = st.session_state['df']
+    st.markdown("<h1 class='main-header'>🏠 Data Hub</h1>", unsafe_allow_html=True)
     
-    if df.empty:
-        st.info("Nenhum dado carregado. Use a aba '🎲 Gerador' ou carregue um arquivo na lateral.")
-        return
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Linhas", f"{df.shape[0]:,}")
-    k2.metric("Colunas", df.shape[1])
-    k3.metric("Duplicatas", df.duplicated().sum())
-    k4.metric("Nulos", df.isna().sum().sum())
-
-    st.markdown("### 📋 Amostra & Estrutura")
-    t1, t2 = st.tabs(["Head", "Info/Types"])
-    with t1: st.dataframe(df.head(), use_container_width=True)
-    with t2:
-        dtypes = df.dtypes.astype(str).reset_index()
-        dtypes.columns = ["Coluna", "Tipo"]
-        st.dataframe(dtypes, use_container_width=True)
-
-def page_generator():
-    st.title("🎲 Gerador de Dados Pro")
-    st.markdown("Construa seu dataset coluna por coluna para testar hipóteses.")
+    col1, col2 = st.columns([1, 2])
     
-    c1, c2 = st.columns([1, 3])
-    
-    with c1:
-        st.subheader("Adicionar Coluna")
-        col_name = st.text_input("Nome da Coluna")
-        col_type = st.selectbox("Tipo", ["Data", "Linear Trend", "Sazonal (Senoide)", "Categorico", "Texto (NLP)"])
+    with col1:
+        st.subheader("📁 Input de Dados")
+        uploaded_file = st.file_uploader("Arraste seu CSV/Excel aqui", type=['csv', 'xlsx'])
         
-        params = {}
-        if col_type == "Linear Trend":
-            params['slope'] = st.number_input("Inclinação (Slope)", value=1.0)
-            params['noise'] = st.number_input("Ruído", value=10.0)
-        elif col_type == "Categorico":
-            params['categories'] = st.text_input("Categorias (sep. vírgula)", "A,B,C")
-        elif col_type == "Sazonal (Senoide)":
-            params['amplitude'] = st.number_input("Amplitude", value=10.0)
-        
-        if st.button("➕ Adicionar"):
-            if col_name:
-                st.session_state['gen_config'].append({"name": col_name, "type": col_type, **params})
-                st.success(f"Coluna {col_name} agendada.")
-
-    with c2:
-        st.subheader("Configuração Atual")
-        config = st.session_state['gen_config']
-        if config:
-            st.table(pd.DataFrame(config))
-            if st.button("Limpar Configuração"):
-                st.session_state['gen_config'] = []
-                st.rerun()
-            
-            n_rows = st.number_input("Número de Linhas", 10, 10000, 500)
-            if st.button("🚀 Gerar DataFrame"):
-                data = {}
-                for conf in config:
-                    data[conf['name']] = DataGenerator.generate_column(n_rows, conf)
-                
-                df = pd.DataFrame(data)
-                st.session_state['df'] = df
-                st.session_state['df_raw'] = df.copy()
-                st.success("Dados gerados e carregados!")
-                st.dataframe(df.head(), use_container_width=True)
-        else:
-            st.info("Adicione colunas à esquerda.")
-
-def page_python_studio():
-    st.title("🐍 Python Studio (IDE)")
-    st.markdown("Escreva código real. `df` é seu dataframe. `plt` e `sns` estão disponíveis.")
-    
-    df = st.session_state['df']
-    if df.empty: st.warning("Sem dados."); return
-
-    col_snip, col_edit = st.columns([1, 3])
-    
-    with col_snip:
-        st.subheader("📚 Snippets")
-        st.caption("Clique para colar o código")
-        
-        with st.expander("Manipulação (Pandas)"):
-            if st.button("Ver Nulos"): st.session_state['code_snippet'] = "st.write(df.isna().sum())"
-            if st.button("Filtrar Dados"): st.session_state['code_snippet'] = "filtered = df[df['coluna'] > 100]\nst.write(filtered.head())"
-            if st.button("Agrupar (GroupBy)"): st.session_state['code_snippet'] = "res = df.groupby('coluna')['valor'].sum().reset_index()\nst.write(res)"
-            if st.button("Pivot Table"): st.session_state['code_snippet'] = "piv = df.pivot_table(index='data', columns='cat', values='val')\nst.write(piv)"
-
-        with st.expander("Visualização (Seaborn)"):
-            if st.button("Histograma"): st.session_state['code_snippet'] = "fig, ax = plt.subplots()\nsns.histplot(data=df, x='coluna', kde=True, ax=ax)\nst.pyplot(fig)"
-            if st.button("Boxplot"): st.session_state['code_snippet'] = "fig, ax = plt.subplots()\nsns.boxplot(data=df, x='cat', y='val', ax=ax)\nst.pyplot(fig)"
-            if st.button("Heatmap Corr"): st.session_state['code_snippet'] = "fig, ax = plt.subplots(figsize=(10,8))\nsns.heatmap(df.corr(numeric_only=True), annot=True, cmap='coolwarm', ax=ax)\nst.pyplot(fig)"
-            if st.button("Pairplot"): st.session_state['code_snippet'] = "fig = sns.pairplot(df.select_dtypes(include='number'))\nst.pyplot(fig)"
-
-    with col_edit:
-        code = st.text_area("Editor", value=st.session_state.get('code_snippet', ''), height=400)
-        c1, c2 = st.columns([1, 5])
-        if c1.button("▶️ Executar"):
+        if st.button("🚢 Carregar Exemplo Titanic (Tutorial)"):
+            url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
             try:
-                local_vars = {'df': df, 'pd': pd, 'np': np, 'plt': plt, 'sns': sns, 'px': px, 'go': go, 'st': st}
-                exec(code, {}, local_vars)
-                
-                # Capture logic (naive)
-                # If user creates a figure named 'fig', we can save it
-                if 'fig' in local_vars:
-                    st.session_state['temp_fig'] = local_vars['fig']
-                    st.success("Figura detectada na memória.")
+                df = pd.read_csv(url)
+                st.session_state['df'] = df
+                st.session_state['df_name'] = "Titanic Dataset"
+                st.session_state['tutorial_step'] = 1 # Avança tutorial
+                st.success("Titanic carregado com sucesso!")
+                st.rerun()
+            except:
+                st.error("Erro ao carregar Titanic. Verifique internet.")
+
+        if uploaded_file:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                st.session_state['df'] = df
+                st.session_state['df_name'] = uploaded_file.name
+                st.success(f"Arquivo {uploaded_file.name} carregado!")
             except Exception as e:
                 st.error(f"Erro: {e}")
+
+    with col2:
+        st.subheader("📊 Visão Geral")
+        df = st.session_state['df']
+        if not df.empty:
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Linhas", df.shape[0])
+            k2.metric("Colunas", df.shape[1])
+            k3.metric("Faltantes", df.isna().sum().sum())
+            k4.metric("Duplicatas", df.duplicated().sum())
+            
+            with st.expander("🔍 Espiar Dados (Head)"):
+                st.dataframe(df.head(), use_container_width=True)
+            
+            with st.expander("ℹ️ Tipos de Dados"):
+                st.write(df.dtypes.astype(str))
+        else:
+            st.info("Aguardando dados... Carregue um arquivo ou use o exemplo.")
+
+def page_python_studio():
+    st.markdown("<h1 class='main-header'>🐍 Python Studio (Code-First)</h1>", unsafe_allow_html=True)
+    st.caption("Ambiente Sandbox. As variáveis `df` (seu dado), `pd`, `np`, `plt`, `px` já estão importadas.")
+    
+    if st.session_state['df'].empty:
+        st.warning("⚠️ Carregue dados na Home primeiro!")
+        return
+
+    col_editor, col_result = st.columns([1, 1])
+    
+    with col_editor:
+        st.markdown("### 📝 Editor")
+        code = st.text_area("Seu Script:", value=st.session_state['code_snippet'], height=300)
         
-        if c2.button("💾 Salvar 'fig' no Relatório"):
-            if 'temp_fig' in st.session_state:
-                fig = st.session_state['temp_fig']
-                # Check type
-                img_data = None
-                if isinstance(fig, plt.Figure):
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format='png')
-                    img_data = buf.getvalue()
-                elif isinstance(fig, go.Figure):
-                    try: img_data = fig.to_image(format="png")
-                    except: pass
+        if st.button("▶️ Executar Código"):
+            st.session_state['code_snippet'] = code # Salva estado
+            
+    with col_result:
+        st.markdown("### 🖥️ Output")
+        try:
+            # Cria ambiente local seguro
+            local_env = {
+                'pd': pd, 'np': np, 'st': st, 
+                'plt': plt, 'sns': sns, 'px': px, 'go': go,
+                'df': st.session_state['df'].copy()
+            }
+            
+            # Captura de output (truque para executar exec() e mostrar resultado)
+            # No Streamlit, usamos st.write dentro do exec para ver outputs
+            exec(code, {}, local_env)
+            
+            # Verifica tutorial
+            if st.session_state['tutorial_active'] and st.session_state['tutorial_step'] in [1, 2]:
+                st.success("✅ Ação detectada! Se você completou a tarefa, avance o tutorial na barra lateral.")
                 
-                if img_data:
-                    st.session_state['report_charts'].append({"title": "Python Plot", "type": "image_bytes", "data": img_data, "note": "Gerado via código"})
-                    st.toast("Salvo!")
-            else:
-                st.warning("Nenhuma variável 'fig' encontrada na última execução.")
-
-def page_sql_studio():
-    st.title("💻 SQL Studio & Cheat Sheet")
-    df = st.session_state['df']
-    if df.empty: st.warning("Sem dados."); return
-    if not _HAS_DUCKDB: st.error("DuckDB ausente."); return
-
-    c1, c2 = st.columns([1, 3])
-    
-    with c1:
-        st.markdown("### 📖 Cheat Sheet Definitiva")
-        
-        with st.expander("🔍 SELECT Básico"):
-            st.markdown("""
-            **Tudo:** `SELECT * FROM df`
-            **Colunas:** `SELECT col1, col2 FROM df`
-            **Alias:** `SELECT col1 AS nome_novo FROM df`
-            **Distintos:** `SELECT DISTINCT categoria FROM df`
-            """)
-            
-        with st.expander("⚖️ Filtros (WHERE)"):
-            st.markdown("""
-            **Maior/Menor:** `WHERE valor > 100`
-            **Texto:** `WHERE nome = 'João'`
-            **Parcial:** `WHERE nome LIKE '%Silva%'`
-            **Lista:** `WHERE uf IN ('SP', 'RJ')`
-            **Nulos:** `WHERE email IS NULL`
-            **Lógica:** `WHERE (A > 10 OR B < 5) AND C = 1`
-            """)
-            
-        with st.expander("∑ Agregações"):
-            st.markdown("""
-            **Contar:** `COUNT(*)`
-            **Soma:** `SUM(vendas)`
-            **Média:** `AVG(idade)`
-            **Max/Min:** `MAX(data)`
-            **Estrutura:**
-            ```sql
-            SELECT cat, SUM(val)
-            FROM df
-            GROUP BY cat
-            HAVING SUM(val) > 1000
-            ```
-            """)
-            
-        with st.expander("🪟 Window Functions (Pro)"):
-            st.markdown("""
-            **Rank:** `RANK() OVER (ORDER BY val DESC)`
-            **Acumulado:** `SUM(val) OVER (ORDER BY data)`
-            **Anterior (Lag):** `LAG(val) OVER (ORDER BY data)`
-            **Média Móvel:**
-            ```sql
-            AVG(val) OVER (
-              ORDER BY data
-              ROWS BETWEEN 2 PRECEDING
-              AND CURRENT ROW
-            )
-            ```
-            """)
-            
-        with st.expander("📅 Datas & Texto"):
-            st.markdown("""
-            **Parte Data:** `EXTRACT(month FROM data)`
-            **Truncar:** `DATE_TRUNC('month', data)`
-            **Diferença:** `DATEDIFF('day', data1, data2)`
-            **Maiúsc:** `UPPER(nome)`
-            **Tamanho:** `LENGTH(nome)`
-            """)
-
-    with c2:
-        st.info("Query Editor (Tabela = 'df')")
-        q = st.text_area("SQL", "SELECT * FROM df LIMIT 10", height=250)
-        if st.button("Executar (Ctrl+Enter)"):
-            try:
-                res = duckdb.query(q).to_df()
-                st.dataframe(res, use_container_width=True)
-            except Exception as e: st.error(f"Erro: {e}")
-
-def page_academy():
-    st.title("🎓 Academy: O Livro Aberto de Dados")
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["Estatística Fundamental", "SQL Avançado", "Python Eficiente", "Teoria de ML"])
-    
-    with tab1:
-        st.markdown("### 📊 Estatística para Analistas")
-        st.markdown("""
-        **1. Medidas de Tendência Central**
-        * **Média:** Soma tudo e divide. Sensível a outliers (salário do Neymar distorce a média do Brasil).
-        * **Mediana:** O valor do meio. Robusta a outliers (se o Neymar entrar na sala, a mediana mal muda).
-        * **Moda:** O valor que mais aparece.
-        
-        **2. Medidas de Dispersão**
-        * **Desvio Padrão:** O quanto os dados fogem da média. Desvio baixo = dados consistentes. Alto = dados voláteis.
-        * **Intervalo Interquartil (IQR):** A distância entre os 25% menores e os 25% maiores. Usado para achar outliers no Boxplot.
-        
-        **3. Distribuições**
-        * **Normal (Gaussiana):** Formato de sino. Muita coisa na natureza segue isso (altura, peso).
-        * **Log-Normal:** Cauda longa (Salários, Preços de Imóveis).
-        
-        **4. Teste de Hipótese (P-Value)**
-        * Imagine que você mudou a cor do botão de "Comprar". As vendas subiram. Foi sorte ou foi o botão?
-        * **P-Value < 0.05:** A chance de ter sido sorte é menor que 5%. Aceitamos que o botão funcionou.
-        """)
-
-    with tab2:
-        st.markdown("### 💻 SQL Avançado")
-        st.markdown("""
-        **CTEs (Common Table Expressions)**
-        Em vez de subqueries aninhadas impossíveis de ler, use `WITH`.
-        ```sql
-        WITH VendasMensais AS (
-            SELECT DATE_TRUNC('month', data) as mes, SUM(valor) as total
-            FROM vendas GROUP BY 1
-        )
-        SELECT * FROM VendasMensais WHERE total > 10000;
-        ```
-        
-        **Joins Explicados**
-        * **INNER JOIN:** Só traz o que tem match nos dois lados (Interseção).
-        * **LEFT JOIN:** Traz TUDO da esquerda, e o que der match da direita (se não tiver, vem NULL). Fundamental para enriquecer dados sem perder linhas.
-        * **FULL JOIN:** Traz tudo de todo mundo.
-        
-        **Window Functions (O Superpoder)**
-        Permitem calcular coisas comparando a linha atual com outras, sem agrupar (sumir) com as linhas.
-        * `LEAD()`: Olha o valor da próxima linha.
-        * `LAG()`: Olha o valor da linha anterior (ótimo para calcular Growth MoM).
-        """)
-        
-    with tab3:
-        st.markdown("### 🐍 Python Eficiente")
-        st.markdown("""
-        **Evite Loops (for) no Pandas!**
-        O Pandas é otimizado para operar vetores (colunas inteiras de uma vez).
-        * ❌ `for i in df: ...` (Lento)
-        * ✅ `df['col'] * 2` (Rápido)
-        * ✅ `df.apply(funcao)` (Médio - use se não der vetorizado)
-        
-        **Loc vs Iloc**
-        * `loc`: Busca por RÓTULO (Label). `df.loc['2023-01-01']`
-        * `iloc`: Busca por POSIÇÃO (Index). `df.iloc[0]` (primeira linha)
-        
-        **Merge vs Concat**
-        * `merge`: Junta lado a lado baseado em uma chave (ID). Igual SQL Join.
-        * `concat`: Cola um embaixo do outro (empilhar meses de vendas) ou lado a lado (sem chave).
-        """)
-
-    with tab4:
-        st.markdown("### 🤖 Machine Learning Desmistificado")
-        st.markdown("""
-        **Classificação vs Regressão**
-        * O alvo é uma categoria (Gato/Cachorro, Churn/Não Churn)? **Classificação**.
-        * O alvo é um número infinito (Preço, Temperatura)? **Regressão**.
-        
-        **Métricas de Erro**
-        * **MAE (Erro Médio Absoluto):** "Em média, eu erro R$ 50,00". Fácil de explicar.
-        * **RMSE (Raiz do Erro Quadrático):** "Em média eu erro... mas penalizo muito erros grandes". Se errar feio é inaceitável, use esse.
-        
-        **Bias-Variance Tradeoff**
-        * **Underfitting (Viés):** O modelo é burro. Não aprendeu nem o treino. (Linha reta em dados curvos).
-        * **Overfitting (Variância):** O modelo é "decorba". Ligou os pontos do treino, mas erra qualquer dado novo.
-        """)
+        except Exception as e:
+            st.error(f"Erro de execução: {e}")
 
 def page_ml_studio():
-    st.title("🤖 ML Studio Transparente")
-    df = st.session_state['df'].copy()
+    st.markdown("<h1 class='main-header'>🤖 ML Studio (AutoML Lite)</h1>", unsafe_allow_html=True)
+    
+    df = st.session_state['df']
     if df.empty: st.warning("Sem dados."); return
 
-    c1, c2 = st.columns(2)
-    target = c1.selectbox("Target (O que prever?)", df.columns)
-    feats = c2.multiselect("Features (Variáveis)", [c for c in df.columns if c!=target])
+    c1, c2 = st.columns([1, 2])
     
-    st.markdown("### ⚙️ Configuração de Hiperparâmetros")
-    st.info("Hiperparâmetros são os 'botões de ajuste' do algoritmo. Eles controlam como ele aprende.")
-    
-    c_param1, c_param2 = st.columns(2)
-    n_est = c_param1.slider("n_estimators (Random Forest)", 10, 300, 100)
-    c_param1.caption("Quantas árvores de decisão criar. Mais árvores = mais estável, mas mais lento e pesado.")
-    
-    max_d = c_param2.slider("max_depth (Profundidade)", 2, 50, 10)
-    c_param2.caption("O quão complexa cada árvore pode ser. Profundidade alta captura detalhes, mas causa Overfitting (decora os dados).")
+    with c1:
+        st.subheader("Configuração")
+        target = st.selectbox("🎯 Coluna Alvo (Target)", df.columns)
+        
+        # Identificar tipo de problema automaticamente
+        is_numeric = pd.api.types.is_numeric_dtype(df[target])
+        unique_vals = df[target].nunique()
+        problem_type = "Regressão" if is_numeric and unique_vals > 10 else "Classificação"
+        
+        st.info(f"Problema detectado: **{problem_type}**")
+        
+        features = st.multiselect("⚙️ Variáveis (Features)", [c for c in df.columns if c != target])
+        split_size = st.slider("Tamanho Teste (%)", 10, 50, 20)
 
-    if st.button("Treinar e Analisar"):
-        if not feats: st.error("Selecione features."); return
-        try:
-            X = df[feats]
-            y = df[target]
-            
-            # Pipeline setup
-            nums = X.select_dtypes(include=np.number).columns
-            cats = X.select_dtypes(include=['object']).columns
-            pre = ColumnTransformer([
-                ('num', SimpleImputer(strategy='median'), nums),
-                ('cat', OneHotEncoder(handle_unknown='ignore'), cats)
-            ])
-            
-            is_reg = pd.api.types.is_numeric_dtype(y) and y.nunique() > 20
-            
-            if is_reg:
-                y = y.fillna(y.mean())
-                model = RandomForestRegressor(n_estimators=n_est, max_depth=max_d, random_state=42)
-                metric = "R²"
+        if st.button("🚀 Treinar Modelo"):
+            if not features:
+                st.error("Selecione features!")
             else:
-                y = y.fillna(y.mode()[0]).astype(str)
-                model = RandomForestClassifier(n_estimators=n_est, max_depth=max_d, random_state=42)
-                metric = "Acurácia"
-                
-            pipe = Pipeline([('pre', pre), ('model', model)])
+                try:
+                    # Preparação simples
+                    X = df[features].select_dtypes(include=np.number).fillna(0) # Simplificação para demo
+                    y = df[target]
+                    
+                    # Encoding se for classificação texto
+                    if problem_type == "Classificação" and y.dtype == 'object':
+                        le = LabelEncoder()
+                        y = le.fit_transform(y.astype(str))
+                    elif problem_type == "Regressão":
+                        y = y.fillna(y.mean())
+                    else:
+                        y = y.fillna(y.mode()[0])
+
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=split_size/100, random_state=42)
+                    
+                    if problem_type == "Regressão":
+                        model = RandomForestRegressor()
+                        model.fit(X_train, y_train)
+                        preds = model.predict(X_test)
+                        score = r2_score(y_test, preds)
+                        metric_name = "R² Score"
+                    else:
+                        model = RandomForestClassifier()
+                        model.fit(X_train, y_train)
+                        preds = model.predict(X_test)
+                        score = accuracy_score(y_test, preds)
+                        metric_name = "Acurácia"
+                    
+                    st.session_state['last_model_score'] = score
+                    st.balloons()
+                    
+                    # Salvar resultado no estado para exibir
+                    st.session_state['ml_results'] = {
+                        "tipo": problem_type,
+                        "metric": metric_name,
+                        "score": score,
+                        "features": features
+                    }
+                    
+                    if st.session_state['tutorial_active'] and st.session_state['tutorial_step'] == 3:
+                        st.session_state['tutorial_step'] = 4
+                        
+                except Exception as e:
+                    st.error(f"Erro no treino: {e} \n(Dica: O ML Studio Simplificado aceita apenas features numéricas por enquanto. Use o Python Studio para tratamento avançado.)")
+
+    with c2:
+        st.subheader("Resultados")
+        if 'ml_results' in st.session_state:
+            res = st.session_state['ml_results']
+            st.metric(label=res['metric'], value=f"{res['score']:.2f}")
+            st.write(f"**Features usadas:** {', '.join(res['features'])}")
             
-            # Split
-            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
-            pipe.fit(X_tr, y_tr)
-            
-            score_tr = pipe.score(X_tr, y_tr)
-            score_te = pipe.score(X_te, y_te)
-            
-            st.divider()
-            st.subheader("📊 Resultados")
-            
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Treino (Decorado)", f"{score_tr:.2f}")
-            k2.metric("Teste (Realidade)", f"{score_te:.2f}")
-            
-            diff = score_tr - score_te
-            if diff > 0.15:
-                k3.error("⚠️ Overfitting Grave")
-                st.warning(f"O modelo performou {diff:.0%} melhor no treino. Ele decorou os dados. Sugestão: Reduza o 'max_depth'.")
-            elif diff < 0.05:
-                k3.success("✅ Modelo Robusto")
+            if res['score'] > 0.95:
+                st.warning("⚠️ Score muito alto! Cuidado com Overfitting.")
+            elif res['score'] < 0.5:
+                st.warning("⚠️ Score baixo. Tente outras features ou limpe os dados.")
             else:
-                k3.warning("⚠️ Atenção Moderada")
-                
-            # Params JSON
-            with st.expander("Ver Configuração Técnica (JSON)"):
-                st.json(model.get_params())
-
-        except Exception as e: st.error(f"Erro: {e}")
-
-def page_report():
-    st.title("📑 Relatório")
-    charts = st.session_state['report_charts']
-    df = st.session_state['df']
-    
-    if not charts:
-        st.info("Nenhum gráfico salvo via Python Studio.")
-    else:
-        for i, ch in enumerate(charts):
-            st.markdown(f"**{i+1}. {ch.get('title','Gráfico')}**")
-            if ch['type'] == 'image_bytes':
-                st.image(ch['data'])
-            st.caption(ch.get('note', ''))
-            if st.button(f"Remover {i}", key=f"del_{i}"):
-                st.session_state['report_charts'].pop(i)
-                st.rerun()
-
-    if st.button("Gerar PDF"):
-        try:
-            kpis = {"rows": len(df), "cols": df.shape[1], "nulls": int(df.isna().sum().sum()), "dups": int(df.duplicated().sum())}
-            pdf = generate_report_v13(df, charts, kpis)
-            st.download_button("Baixar PDF", pdf, "relatorio_codefirst.pdf", "application/pdf")
-        except Exception as e: st.error(f"Erro PDF: {e}")
+                st.success("✅ Modelo promissor!")
 
 # ---------------------------
-# MAIN
+# MAIN APP LOGIC
 # ---------------------------
 def main():
+    # Sidebar de Navegação
     with st.sidebar:
-        st.title("🐍 Code-First v13")
+        st.title("🚀 Enterprise v14")
+        st.write(f"Arquivo Atual: *{st.session_state['df_name']}*")
         
-        uploaded = st.file_uploader("Arquivo", type=['csv','xlsx'])
-        if uploaded:
-            uid = f"{uploaded.name}_{uploaded.size}"
-            if st.session_state.get('last_uid') != uid:
-                try:
-                    if uploaded.name.endswith('.csv'): df = pd.read_csv(uploaded)
-                    else: df = pd.read_excel(uploaded)
-                    st.session_state['df'] = clean_colnames(df)
-                    st.session_state['df_raw'] = st.session_state['df'].copy()
-                    st.session_state['last_uid'] = uid
-                    st.rerun()
-                except Exception as e: st.error(e)
-
         st.markdown("---")
-        menu = st.radio("Menu", ["🏠 Home", "🎲 Gerador Dados", "🐍 Python Studio", "💻 SQL Studio", "🎓 Academy", "🏆 ML Studio", "📑 Relatório"])
-        if st.button("Reset"): st.session_state.clear(); st.rerun()
+        st.markdown("### 🧭 Navegação")
+        page = st.radio("", ["🏠 Home", "🐍 Python Studio", "🎓 Academy", "🤖 ML Studio"])
+        
+        st.markdown("---")
+        st.markdown("### 🎮 Gamification")
+        # Toggle do Tutorial
+        tut_mode = st.checkbox("Modo Tutorial", value=st.session_state['tutorial_active'])
+        if tut_mode != st.session_state['tutorial_active']:
+            st.session_state['tutorial_active'] = tut_mode
+            st.rerun()
+            
+        if st.session_state['tutorial_active']:
+            st.progress(st.session_state['tutorial_step'] / 4)
+            st.caption(f"Progresso: {st.session_state['tutorial_step']}/4")
 
-    if menu == "🏠 Home": page_home()
-    elif menu == "🎲 Gerador Dados": page_generator()
-    elif menu == "🐍 Python Studio": page_python_studio()
-    elif menu == "💻 SQL Studio": page_sql_studio()
-    elif menu == "🎓 Academy": page_academy()
-    elif menu == "🏆 ML Studio": page_ml_studio()
-    elif menu == "📑 Relatório": page_report()
+    # Renderizador do Tutorial (Aparece no topo de todas as páginas se ativo)
+    tutorial_manager()
+
+    # Roteamento de Páginas
+    if page == "🏠 Home": page_home()
+    elif page == "🐍 Python Studio": page_python_studio()
+    elif page == "🎓 Academy": render_academy()
+    elif page == "🤖 ML Studio": page_ml_studio()
 
 if __name__ == "__main__":
     main()
