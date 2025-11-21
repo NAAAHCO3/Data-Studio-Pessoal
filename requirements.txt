@@ -15,3 +15,4 @@ duckdb
 kaleido
 xgboost
 pyyaml
+seaborn
